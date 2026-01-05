@@ -1,0 +1,46 @@
+services:
+  runner:
+    build:
+      context: ./runner
+    ports:
+      - "8000:8000"
+    volumes:
+      # Local dev only. In production, do not mount docker.sock into a container.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+
+  sandbox-python:
+    build:
+      context: ./sandbox-python
+    image: matrix-lab-sandbox-python:latest
+
+  sandbox-go:
+    build:
+      context: ./sandbox-go
+    image: matrix-lab-sandbox-go:latest
+
+  sandbox-rust:
+    build:
+      context: ./sandbox-rust
+    image: matrix-lab-sandbox-rust:latest
+
+  sandbox-node:
+    build:
+      context: ./sandbox-node
+    image: matrix-lab-sandbox-node:latest
+
+  # Optional demo client (uncomment if you want it to run automatically)
+  # orchestrator:
+  #   build:
+  #     context: ./orchestrator
+  #   environment:
+  #     - RUNNER_URL=http://runner:8000
+  #     - REPO_URL=https://github.com/pallets/flask.git
+  #     - REPO_REF=main
+  #   depends_on:
+  #     - runner
+  #     - sandbox-python
+  #     - sandbox-go
+  #     - sandbox-rust
+  #     - sandbox-node
