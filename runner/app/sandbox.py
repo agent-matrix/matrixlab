@@ -28,7 +28,6 @@ def _run_local(cmd: List[str], timeout: int) -> CmdOut:
 def runner_preflight() -> None:
     """
     Fail fast if the Runner container cannot run Docker sibling containers.
-    This is the #1 cause of MCP tools returning '[No output]'.
     """
     # 1) docker binary present?
     try:
@@ -59,7 +58,9 @@ def runner_preflight() -> None:
 
 
 def _zip_dir_to_base64(dir_path: str) -> str:
-    fd, zip_path = tempfile.mkstemp(suffix=".zip")
+    # Create zip in the same base dir to ensure atomic moves/access
+    base_dir = os.path.dirname(dir_path)
+    fd, zip_path = tempfile.mkstemp(suffix=".zip", dir=base_dir)
     os.close(fd)
     try:
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
@@ -76,29 +77,47 @@ def _zip_dir_to_base64(dir_path: str) -> str:
 
 
 def run_job(req: RunRequest):
-    """
-    Runs each step in a fresh container.
-
-    v1 design:
-    - workspace + output are host temp dirs bind-mounted into each container.
-    - network is per-step (none vs bridge).
-    """
-
-    # preflight each job as well (useful when runner restarts or socket disappears)
     runner_preflight()
 
     job_id = str(uuid.uuid4())
-    host_output_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-out-")
-    host_workspace_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-ws-")
+    
+    # ✅ FIX: Handle Docker-in-Docker path mapping logic.
+    # MATRIXLAB_LOCAL_JOBS_DIR: Where THIS container writes files (default: /app/runner_tmp)
+    # MATRIXLAB_HOST_JOBS_DIR:  Where the HOST Docker Daemon sees those files (default: same)
+    
+    local_jobs_root = os.environ.get("MATRIXLAB_LOCAL_JOBS_DIR", os.path.join(os.getcwd(), "runner_tmp"))
+    # If not provided, assume we are not in DinD mode or paths match
+    host_jobs_root = os.environ.get("MATRIXLAB_HOST_JOBS_DIR", local_jobs_root)
 
-    # ensure dirs writable from container.
-    # Docker bind-mount permissions can be tricky (WSL/Linux mismatch).
-    # 777 ensures anyone (container user) can write.
-    subprocess.run(["chmod", "-R", "777", host_workspace_dir, host_output_dir], check=False)
+    # Ensure local directory exists so we can write to it
+    os.makedirs(local_jobs_root, exist_ok=True)
 
-    # ensure /output has a marker even if we fail early
+    # 1. Create the unique job directory LOCALLY
+    local_job_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-", dir=local_jobs_root)
+
+    # 2. Calculate the corresponding HOST path
+    # e.g. Local: /app/runner_tmp/job-123
+    #      Host:  /mnt/c/workspace/runner_tmp/job-123
+    rel_path = os.path.relpath(local_job_dir, local_jobs_root)
+    host_job_dir = os.path.join(host_jobs_root, rel_path)
+
+    # 3. Create subdirectories locally
+    local_out_dir = os.path.join(local_job_dir, "out")
+    local_ws_dir = os.path.join(local_job_dir, "ws")
+    os.makedirs(local_out_dir, exist_ok=True)
+    os.makedirs(local_ws_dir, exist_ok=True)
+
+    # 4. Define Host paths for Docker Volume mounting
+    host_out_dir = os.path.join(host_job_dir, "out")
+    host_ws_dir = os.path.join(host_job_dir, "ws")
+
+    # ✅ FIX: Open permissions (777) so the Sandbox container (which might run as non-root)
+    # can write to these folders created by the Runner (which runs as root).
+    subprocess.run(["chmod", "-R", "777", local_job_dir], check=False)
+
+    # ensure /output has a marker
     try:
-        with open(os.path.join(host_output_dir, "_runner.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(local_out_dir, "_runner.txt"), "w", encoding="utf-8") as f:
             f.write("runner_ok=1\n")
     except Exception:
         pass
@@ -106,7 +125,6 @@ def run_job(req: RunRequest):
     results: List[StepResult] = []
 
     pull_policy = os.environ.get("MATRIXLAB_DOCKER_PULL", "missing").strip()
-    # allowed: always|missing|never
     pull_args: List[str] = []
     if pull_policy in ("always", "missing", "never"):
         pull_args = ["--pull", pull_policy]
@@ -122,8 +140,8 @@ def run_job(req: RunRequest):
             "--name",
             container_name,
             "--init",
-            # NOTE: Removed "--user 1000:1000" to allow running as root in container.
-            # This fixes "Permission denied" on bind mounts in WSL/Linux.
+            # Run as root inside sandbox to avoid permission issues? 
+            # Ideally not, but if 777 is set, user doesn't matter.
             "--read-only",
             "--pids-limit",
             str(req.pids_limit),
@@ -139,10 +157,11 @@ def run_job(req: RunRequest):
             "none",
             "--workdir",
             "/workspace",
+            # ✅ FIX: Mount using HOST paths
             "-v",
-            f"{host_workspace_dir}:/workspace:rw",
+            f"{host_ws_dir}:/workspace:rw",
             "-v",
-            f"{host_output_dir}:/output:rw",
+            f"{host_out_dir}:/output:rw",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=256m",
         ] + network_flag + pull_args + [
@@ -167,6 +186,7 @@ echo "== Matrix Lab step: {step.name} =="
 """
 
         try:
+            # We append the script as the argument to bash -lc
             out = _run_local(docker_cmd + [step_script], timeout=step.timeout_seconds)
             results.append(
                 StepResult(
@@ -177,9 +197,9 @@ echo "== Matrix Lab step: {step.name} =="
                 )
             )
 
-            # Write last step status for debugging
+            # Debug marker
             try:
-                with open(os.path.join(host_output_dir, "_last_step.txt"), "w", encoding="utf-8") as f:
+                with open(os.path.join(local_out_dir, "_last_step.txt"), "w", encoding="utf-8") as f:
                     f.write(f"name={step.name}\nexit_code={out.exit_code}\n")
             except Exception:
                 pass
@@ -200,21 +220,15 @@ echo "== Matrix Lab step: {step.name} =="
             break
 
         except FileNotFoundError as e:
-            # The exact error you hit
             results.append(
                 StepResult(
                     name=step.name,
                     exit_code=999,
                     stdout="",
-                    stderr=(
-                        "Runner error: docker CLI not found. "
-                        "Fix Runner image to include docker-ce-cli.\n"
-                        f"detail={e}"
-                    ),
+                    stderr=f"Runner error: docker CLI not found.\n{e}",
                 )
             )
             break
-
         except Exception as e:
             results.append(
                 StepResult(
@@ -226,7 +240,12 @@ echo "== Matrix Lab step: {step.name} =="
             )
             break
 
-    artifacts_b64: Optional[str] = _zip_dir_to_base64(host_output_dir)
+    # Read artifacts from LOCAL path (where python can see them)
+    artifacts_b64: Optional[str] = _zip_dir_to_base64(local_out_dir)
+    
+    # Cleanup (optional, but good for local dev)
+    # import shutil
+    # shutil.rmtree(local_job_dir, ignore_errors=True)
 
     return {
         "job_id": job_id,
@@ -240,7 +259,6 @@ echo "== Matrix Lab step: {step.name} =="
 # =============================================================================
 
 def docker_info() -> dict:
-    # Check docker binary + daemon connectivity
     try:
         out = _run_local(["docker", "version"], timeout=5)
         ok = out.exit_code == 0
@@ -260,9 +278,6 @@ def _image_exists(image: str) -> bool:
 
 
 def sandbox_selftest() -> dict:
-    """
-    Runs a tiny command in each sandbox to validate the toolchain.
-    """
     images = {
         "utils": ("matrix-lab-sandbox-utils:latest", "sh -lc 'command -v find && command -v rg && command -v unzip && echo OK'"),
         "python": ("matrix-lab-sandbox-python:latest", "sh -lc 'python -V && pip -V && echo OK'"),

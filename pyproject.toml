@@ -62,13 +62,15 @@ Issues = "https://github.com/agent-matrix/matrixlab/issues"
 [project.scripts]
 matrixlab-mcp = "matrixlab.mcp_server:cli"
 matrixlab-inspect = "matrixlab.mcp_inspector:cli"
+matrixlab-start = "tools.bootstrap:main"
 
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["matrixlab*"]
+# Important: Added "tools*" so tools/bootstrap.py is included in the package
+include = ["matrixlab*", "tools*"]
 exclude = [
   "runner*",
   "orchestrator*",

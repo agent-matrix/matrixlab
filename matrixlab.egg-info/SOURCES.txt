@@ -11,3 +11,5 @@ matrixlab.egg-info/dependency_links.txt
 matrixlab.egg-info/entry_points.txt
 matrixlab.egg-info/requires.txt
 matrixlab.egg-info/top_level.txt
+tools/bootstrap.py
+tools/inspector_ui.py

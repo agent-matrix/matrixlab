@@ -1,14 +1,12 @@
+# matrixlab/mcp_server.py
 """
-matrixlab/mcp_server.py
-
 Production MCP server for MatrixLab
 Explorer + Editor + Intelligence + Executor + Runner Diagnostics + Artifact Utilities
 
-Key improvements:
-- Many tools (repo + zip)
-- Clear Runner diagnostics (health/capabilities + common failure hints)
-- Better artifact zip parsing helpers (accept artifacts_zip_base64 as input)
-- Uses async httpx
+Key improvements (this revision):
+- Persistent global httpx.AsyncClient (no per-request connect overhead)
+- Explicit httpx.Timeout (read timeout supports long runs like pip/npm/cargo/tests)
+- Better timeout/error reporting (ReadTimeout/ConnectTimeout surfaced as text)
 - Stderr-only logging (safe for stdio MCP)
 - MCP SDK compatibility: initialization_options passed only if supported
 """
@@ -38,6 +36,7 @@ try:
     from mcp.server.models import InitializationOptions  # type: ignore
 except Exception:  # pragma: no cover
     from mcp.server import Server  # type: ignore
+
     NotificationOptions = None  # type: ignore
     InitializationOptions = None  # type: ignore
 
@@ -49,6 +48,7 @@ RUNNER_URL = os.environ.get("RUNNER_URL", "http://localhost:8000").rstrip("/")
 SERVER_NAME = os.environ.get("MATRIXLAB_SERVER_NAME", "matrix-lab")
 SERVER_VERSION = os.environ.get("MATRIXLAB_VERSION", "1.2.0")
 
+# Long, server-side HTTP timeout (important for long test/install runs)
 HTTP_TIMEOUT_S = float(os.environ.get("MATRIXLAB_HTTP_TIMEOUT_S", "900"))
 
 DEFAULT_LIMITS = {
@@ -78,25 +78,74 @@ log = logging.getLogger("matrixlab")
 
 server = Server(SERVER_NAME)
 
+# =============================================================================
+# Persistent HTTP client (FIX for MCP -32001 timeouts due to per-request overhead)
+# =============================================================================
+_HTTP: Optional[httpx.AsyncClient] = None
+
+
+def _make_timeout(read_s: float) -> httpx.Timeout:
+    """
+    Explicit per-phase timeouts:
+      - connect/write/pool are short to fail fast on infrastructure issues
+      - read is long to allow long-running /run calls
+    """
+    return httpx.Timeout(connect=10.0, read=read_s, write=30.0, pool=10.0)
+
+
+def _require_http() -> httpx.AsyncClient:
+    if _HTTP is None:
+        raise RuntimeError("HTTP client not initialized")
+    return _HTTP
+
+
+async def _init_http_client() -> None:
+    global _HTTP
+    if _HTTP is not None:
+        return
+
+    limits = httpx.Limits(
+        max_connections=50,
+        max_keepalive_connections=20,
+        keepalive_expiry=30.0,
+    )
+
+    # base_url avoids repeated string concat and is slightly faster/cleaner
+    _HTTP = httpx.AsyncClient(
+        base_url=RUNNER_URL,
+        timeout=_make_timeout(HTTP_TIMEOUT_S),
+        limits=limits,
+        headers={"User-Agent": f"{SERVER_NAME}/{SERVER_VERSION}"},
+        http2=False,
+    )
+
+
+async def _close_http_client() -> None:
+    global _HTTP
+    if _HTTP is not None:
+        await _HTTP.aclose()
+        _HTTP = None
+
 
 # =============================================================================
 # HTTP helpers (async)
 # =============================================================================
 async def _http_post_json(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    url = f"{RUNNER_URL}{path}"
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_S) as client:
-        r = await client.post(url, json=payload)
-        r.raise_for_status()
-        return r.json()
+    client = _require_http()
+    r = await client.post(path, json=payload)
+    r.raise_for_status()
+    return r.json()
 
 
 async def _http_get_json(path: str, timeout_s: float = 2.0) -> Optional[Dict[str, Any]]:
-    url = f"{RUNNER_URL}{path}"
+    """
+    Best-effort GET for diagnostics. Uses a short override timeout.
+    """
+    client = _require_http()
     try:
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            return r.json()
+        r = await client.get(path, timeout=_make_timeout(timeout_s))
+        r.raise_for_status()
+        return r.json()
     except Exception:
         return None
 
@@ -130,6 +179,7 @@ def _zip_names_from_b64(artifacts_zip_base64: str) -> List[str]:
 def _read_artifact_text(artifacts_zip_base64: Optional[str], target_filename: str) -> str:
     """
     Robustly read a file from artifact zip (base64).
+
     - exact name match
     - basename match anywhere in zip
     """
@@ -203,7 +253,7 @@ def _image_for_lang(lang: str) -> str:
 
 
 # =============================================================================
-# Runner failure diagnosis (important for your docker-missing case)
+# Runner failure diagnosis
 # =============================================================================
 def _runner_failure_hints(res: Dict[str, Any]) -> List[str]:
     hints: List[str] = []
@@ -370,14 +420,35 @@ def _install_and_run_steps(lang: str, command: str, install_dependencies: bool) 
     if lang == "go":
         run_net = "egress" if install_dependencies else "none"
         run_cmd = f"go version && {cmd}"
-        return [{"name": "run", "network": run_net, "timeout_seconds": 900, "command": common_prefix + run_cmd + " > /output/result.txt 2>&1 && echo ok > /output/ok.txt"}]
+        return [
+            {
+                "name": "run",
+                "network": run_net,
+                "timeout_seconds": 900,
+                "command": common_prefix + run_cmd + " > /output/result.txt 2>&1 && echo ok > /output/ok.txt",
+            }
+        ]
 
     if lang == "rust":
         run_net = "egress" if install_dependencies else "none"
         run_cmd = f"rustc -V && cargo -V && {cmd}"
-        return [{"name": "run", "network": run_net, "timeout_seconds": 1200, "command": common_prefix + run_cmd + " > /output/result.txt 2>&1 && echo ok > /output/ok.txt"}]
+        return [
+            {
+                "name": "run",
+                "network": run_net,
+                "timeout_seconds": 1200,
+                "command": common_prefix + run_cmd + " > /output/result.txt 2>&1 && echo ok > /output/ok.txt",
+            }
+        ]
 
-    return [{"name": "run", "network": "none", "timeout_seconds": 300, "command": common_prefix + cmd + " > /output/result.txt 2>&1 && echo ok > /output/ok.txt"}]
+    return [
+        {
+            "name": "run",
+            "network": "none",
+            "timeout_seconds": 300,
+            "command": common_prefix + cmd + " > /output/result.txt 2>&1 && echo ok > /output/ok.txt",
+        }
+    ]
 
 
 # =============================================================================
@@ -483,7 +554,7 @@ async def _detect_stack_from_zip(zip_base64: str, limits: Dict[str, Any]) -> Dic
 
 
 # =============================================================================
-# MCP Tools list (many tools, repo+zip + artifact utils + runner diagnostics)
+# MCP Tools list
 # =============================================================================
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
@@ -494,8 +565,7 @@ async def list_tools() -> list[types.Tool]:
             description="Get Runner health + capabilities (best-effort).",
             inputSchema={"type": "object", "properties": {}},
         ),
-
-        # ---- Artifact utilities (ChatGPT/Gemini agents love these) ----
+        # ---- Artifact utilities ----
         types.Tool(
             name="artifacts_list",
             description="List files inside artifacts_zip_base64 (base64-encoded zip).",
@@ -518,7 +588,6 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["artifacts_zip_base64", "filename"],
             },
         ),
-
         # ---- Explorer (git) ----
         types.Tool(
             name="list_files",
@@ -572,14 +641,17 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["repo_url", "file_path"],
             },
         ),
-
         # ---- Explorer (zip) ----
         types.Tool(
             name="zip_list_files",
             description="List files inside uploaded zip (base64). Runs in sandbox-utils.",
             inputSchema={
                 "type": "object",
-                "properties": {"zip_base64": {"type": "string"}, "path": {"type": "string", "default": "."}, "depth": {"type": "integer", "default": 4}},
+                "properties": {
+                    "zip_base64": {"type": "string"},
+                    "path": {"type": "string", "default": "."},
+                    "depth": {"type": "integer", "default": 4},
+                },
                 "required": ["zip_base64"],
             },
         ),
@@ -610,7 +682,6 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["zip_base64", "file_path"],
             },
         ),
-
         # ---- Editor (git) ----
         types.Tool(
             name="write_file",
@@ -621,7 +692,6 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["repo_url", "file_path", "content"],
             },
         ),
-
         # ---- Intelligence ----
         types.Tool(
             name="detect_stack",
@@ -633,7 +703,6 @@ async def list_tools() -> list[types.Tool]:
             description="Detect language & recommended sandbox image from uploaded zip. Runs in sandbox-utils.",
             inputSchema={"type": "object", "properties": {"zip_base64": {"type": "string"}, "limits": {"type": "object"}}, "required": ["zip_base64"]},
         ),
-
         # ---- Executor (git + zip) ----
         types.Tool(
             name="repo_run",
@@ -717,27 +786,22 @@ async def call_tool(
 
             b64 = res.get("artifacts_zip_base64")
             out = (_read_artifact_text(b64, "result.txt") or "").strip()
-
             if out:
                 return _text(out)
 
-            # If empty, show the REAL reason: runner step errors
             results = res.get("results") or []
             hints: List[str] = []
-
             for r in results:
                 if (r.get("exit_code") or 0) != 0:
                     hints.append(
                         f"Step '{r.get('name')}' failed (exit_code={r.get('exit_code')}). "
                         f"stderr: {(_truncate(r.get('stderr') or '', 2000)).strip()}"
                     )
-
             if not hints:
                 hints.append(
                     "No result.txt produced. This usually means the clone step failed or the command produced no output. "
                     "Inspect res.result.results for step stderr."
                 )
-
             return _text(json.dumps({"output": "[No output]", "hints": hints, "raw_results": results}, ensure_ascii=False))
 
         if name == "read_file":
@@ -745,6 +809,7 @@ async def call_tool(
             ref = arguments.get("ref")
             file_path = _sanitize_rel_path(arguments.get("file_path", ""), allow_dot=False)
             max_bytes = int(arguments.get("max_bytes", 20000))
+
             py = f"""
 python3 - <<'PY'
 import sys
@@ -804,6 +869,7 @@ PY
             zip_b64 = arguments["zip_base64"]
             file_path = _sanitize_rel_path(arguments.get("file_path", ""), allow_dot=False)
             max_bytes = int(arguments.get("max_bytes", 20000))
+
             py = f"""
 python3 - <<'PY'
 import sys
@@ -913,9 +979,7 @@ PY
             elif detected not in SUPPORTED_LANGS:
                 detected = "python"
 
-            steps: List[Dict[str, Any]] = [
-                {"name": "clone", "network": "egress", "timeout_seconds": 240, "command": _clone_script(repo_url, ref)}
-            ]
+            steps: List[Dict[str, Any]] = [{"name": "clone", "network": "egress", "timeout_seconds": 240, "command": _clone_script(repo_url, ref)}]
             if files_override:
                 steps.append({"name": "patch", "network": "none", "timeout_seconds": 240, "command": _patch_script(files_override)})
             steps.extend(_install_and_run_steps(detected, command, install_dependencies))
@@ -1005,10 +1069,20 @@ PY
 
     except ValueError as ve:
         return [types.TextContent(type="text", text=f"Error: {str(ve)}")]
+
+    # ---- Improved timeout reporting (FIX) ----
+    except httpx.ReadTimeout:
+        return [types.TextContent(type="text", text=f"Runner request timed out while reading response (read_timeout={HTTP_TIMEOUT_S}s).")]
+    except httpx.ConnectTimeout:
+        return [types.TextContent(type="text", text="Runner connection timed out while establishing connection (connect_timeout=10s).")]
+    except httpx.TimeoutException as te:
+        return [types.TextContent(type="text", text=f"Runner request timed out: {type(te).__name__}: {str(te)}")]
+
     except httpx.HTTPStatusError as he:
-        # Surface runner status code + response text if available
         msg = f"Runner HTTP error: {he.response.status_code} {he.response.text}"
         return [types.TextContent(type="text", text=msg)]
+    except httpx.ConnectError as ce:
+        return [types.TextContent(type="text", text=f"Runner connection error: {str(ce)} (RUNNER_URL={RUNNER_URL})")]
     except Exception as e:
         log.exception("Tool %s failed", name)
         return [types.TextContent(type="text", text=f"Error executing {name}: {str(e)}")]
@@ -1039,6 +1113,10 @@ def _make_init_opts() -> Any:
 async def main() -> None:
     log.info("MCP stdio server starting: name=%s version=%s", SERVER_NAME, SERVER_VERSION)
     log.info("RUNNER_URL=%s", RUNNER_URL)
+
+    # Initialize the persistent HTTP client once (FIX)
+    await _init_http_client()
+
     await _runner_preflight()
     log.info("Ready. Waiting for MCP client on stdin... (logs on stderr)")
 
@@ -1064,6 +1142,23 @@ def cli() -> int:
     except Exception:
         log.exception("Fatal error in MCP server")
         return 1
+    finally:
+        # Best-effort close (safe even if not initialized)
+        try:
+            # If event loop is already closed, we can't await; that's fine.
+            if _HTTP is not None:
+                loop = None
+                try:
+                    loop = asyncio.get_event_loop()
+                except Exception:
+                    loop = None
+                if loop and loop.is_running():
+                    # Running loop: schedule close
+                    loop.create_task(_close_http_client())
+                else:
+                    asyncio.run(_close_http_client())
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
