@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrixlab"
+version = "0.1.0"
+description = "Safety-first sandbox verification facility for Agent-Matrix (MCP stdio server + inspector)."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+
+authors = [
+  { name = "Ruslan Magana Vsevolodovna", email = "contact@ruslanmv.com" }
+]
+
+keywords = [
+  "mcp",
+  "model-context-protocol",
+  "sandbox",
+  "security",
+  "docker",
+  "agent",
+  "testing",
+  "verification"
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+  "Topic :: Software Development :: Testing",
+  "Topic :: Utilities"
+]
+
+dependencies = [
+  "mcp==1.2.0",
+  "requests>=2.32.3,<3"
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2.2",
+  "twine>=5.1.1",
+  "ruff>=0.6.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/agent-matrix/matrixlab"
+Repository = "https://github.com/agent-matrix/matrixlab"
+Issues = "https://github.com/agent-matrix/matrixlab/issues"
+
+[project.scripts]
+matrixlab-mcp = "matrixlab.mcp_server:cli"
+matrixlab-inspect = "matrixlab.mcp_inspector:cli"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["matrixlab*"]
+exclude = [
+  "runner*",
+  "orchestrator*",
+  "sandbox-*",
+  "scripts*",
+  "tests*"
+]

@@ -1,54 +1,84 @@
+from __future__ import annotations
+
+import base64
 import json
 import os
-import shutil
-import subprocess
 import tempfile
 import time
+import zipfile
+from typing import Optional
 
 from .client import RunnerClient
-from .detect import detect_language
+from .detect import detection_steps
 from .pipelines import pipeline_for
 
 
-def shallow_clone_for_detection(repo_url: str, ref: str) -> str:
-    """Clone repo locally ONLY to inspect files (no code execution)."""
-    tmpdir = tempfile.mkdtemp(prefix="matrixlab-detect-")
-    repo_path = os.path.join(tmpdir, "repo")
+def _extract_artifacts_zip_b64(artifacts_zip_base64: Optional[str]) -> str:
+    if not artifacts_zip_base64:
+        return ""
 
-    subprocess.run(["git", "clone", "--depth=1", repo_url, repo_path], check=True)
+    data = base64.b64decode(artifacts_zip_base64)
+    tmpdir = tempfile.mkdtemp(prefix="matrixlab-artifacts-")
+    zpath = os.path.join(tmpdir, "artifacts.zip")
+    with open(zpath, "wb") as f:
+        f.write(data)
 
-    if ref:
-        # checkout best-effort; if it fails, keep default branch
-        subprocess.run(["git", "-C", repo_path, "checkout", ref], check=False)
+    with zipfile.ZipFile(zpath, "r") as z:
+        z.extractall(tmpdir)
 
-    return repo_path
+    return tmpdir
 
 
-def main():
-    runner_url = os.environ.get("RUNNER_URL", "http://localhost:8000")
+def _read_text_if_exists(path: str) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def main() -> None:
+    runner_url = os.environ.get("RUNNER_URL", "http://localhost:8000").rstrip("/")
     repo_url = os.environ.get("REPO_URL", "https://github.com/pallets/flask.git")
     ref = os.environ.get("REPO_REF", "main")
     run_command = os.environ.get("RUN_COMMAND")  # optional override
 
+    client = RunnerClient(runner_url)
+
+    # Wait for runner
     print(f"[orchestrator] waiting for runner at {runner_url} ...")
-    time.sleep(2)
+    for _ in range(30):
+        try:
+            h = client.health()
+            if h.get("status") == "ok":
+                break
+        except Exception:
+            time.sleep(1)
+    else:
+        raise SystemExit("[orchestrator] runner not healthy")
 
-    detect_repo_path = None
-    language = "unknown"
+    # 1) Detect language inside sandbox-utils (no host clone)
+    detect_payload = {
+        "repo_url": repo_url,
+        "ref": ref,
+        "cpu_limit": 0.5,
+        "mem_limit_mb": 512,
+        "pids_limit": 128,
+        "sandbox_image": "matrix-lab-sandbox-utils:latest",
+        "steps": detection_steps(repo_url, ref),
+    }
 
-    try:
-        detect_repo_path = shallow_clone_for_detection(repo_url, ref)
-        language = detect_language(detect_repo_path)
-    except Exception as e:
-        print(f"[orchestrator] detection failed: {e}")
-    finally:
-        if detect_repo_path:
-            shutil.rmtree(os.path.dirname(detect_repo_path), ignore_errors=True)
+    print("[orchestrator] detecting language (in sandbox-utils)...")
+    detect_res = client.run(detect_payload)
+
+    artifacts_dir = _extract_artifacts_zip_b64(detect_res.get("artifacts_zip_base64"))
+    lang = _read_text_if_exists(os.path.join(artifacts_dir, "lang.txt")) if artifacts_dir else None
+    language = (lang or "unknown").strip()
 
     print(f"[orchestrator] detected language: {language}")
 
+    # 2) Build pipeline and run real job
     pipeline = pipeline_for(language, repo_url, ref, run_command)
-
     payload = {
         "repo_url": repo_url,
         "ref": ref,
@@ -59,10 +89,9 @@ def main():
         "steps": pipeline["steps"],
     }
 
-    client = RunnerClient(runner_url)
-
     print("[orchestrator] sending job request...")
     res = client.run(payload)
+
     print("[orchestrator] job completed:")
     print(json.dumps(res, indent=2))
 

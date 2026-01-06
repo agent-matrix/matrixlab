@@ -1,12 +1,15 @@
-FROM golang:1.22-bookworm
+FROM mcr.microsoft.com/dotnet/sdk:8.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
     curl \
+    unzip \
+    zip \
+    bash \
  && rm -rf /var/lib/apt/lists/*
 
-# Ensure we have a non-root "sandbox" user. Prefer UID 1000 if available.
+# Create/ensure non-root "sandbox" user (UID-safe)
 RUN set -eux; \
     existing="$(getent passwd 1000 | cut -d: -f1 || true)"; \
     if [ -n "$existing" ] && [ "$existing" != "sandbox" ]; then \
@@ -21,6 +24,5 @@ RUN set -eux; \
 WORKDIR /workspace
 USER sandbox
 
-# Keep caches inside /workspace to avoid writing to root-owned locations
-ENV GOMODCACHE=/workspace/.cache/gomod \
-    GOCACHE=/workspace/.cache/gocache
+# Keep NuGet cache in workspace
+ENV NUGET_PACKAGES=/workspace/.nuget/packages
