@@ -25,6 +25,39 @@ def _run_local(cmd: List[str], timeout: int) -> CmdOut:
     return CmdOut(p.returncode, p.stdout, p.stderr)
 
 
+def runner_preflight() -> None:
+    """
+    Fail fast if the Runner container cannot run Docker sibling containers.
+    This is the #1 cause of MCP tools returning '[No output]'.
+    """
+    # 1) docker binary present?
+    try:
+        subprocess.run(["docker", "version"], capture_output=True, text=True, check=False)
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "Runner cannot find the 'docker' binary. "
+            "Install docker CLI in runner image (docker-ce-cli) and rebuild."
+        ) from e
+
+    # 2) docker socket reachable?
+    sock = "/var/run/docker.sock"
+    if not os.path.exists(sock):
+        raise RuntimeError(
+            "Runner cannot see /var/run/docker.sock. "
+            "Mount it into the runner container via docker-compose:\n"
+            "  - /var/run/docker.sock:/var/run/docker.sock"
+        )
+
+    # 3) can talk to daemon?
+    probe = subprocess.run(["docker", "info"], capture_output=True, text=True)
+    if probe.returncode != 0:
+        raise RuntimeError(
+            "Runner can execute docker CLI but cannot talk to Docker daemon. "
+            "Check permissions on /var/run/docker.sock or run runner as root.\n"
+            f"docker info stderr:\n{probe.stderr}"
+        )
+
+
 def _zip_dir_to_base64(dir_path: str) -> str:
     fd, zip_path = tempfile.mkstemp(suffix=".zip")
     os.close(fd)
@@ -49,18 +82,32 @@ def run_job(req: RunRequest):
     v1 design:
     - workspace + output are host temp dirs bind-mounted into each container.
     - network is per-step (none vs bridge).
-
-    Note: For production, prefer named volumes or managed storage and tighter network egress.
     """
+
+    # preflight each job as well (useful when runner restarts or socket disappears)
+    runner_preflight()
 
     job_id = str(uuid.uuid4())
     host_output_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-out-")
     host_workspace_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-ws-")
 
-    # dev convenience so uid 1000 can write.
+    # ensure dirs writable from container uid 1000
     subprocess.run(["chmod", "777", host_workspace_dir, host_output_dir], check=False)
 
+    # ensure /output has a marker even if we fail early
+    try:
+        with open(os.path.join(host_output_dir, "_runner.txt"), "w", encoding="utf-8") as f:
+            f.write("runner_ok=1\n")
+    except Exception:
+        pass
+
     results: List[StepResult] = []
+
+    pull_policy = os.environ.get("MATRIXLAB_DOCKER_PULL", "missing").strip()
+    # allowed: always|missing|never
+    pull_args: List[str] = []
+    if pull_policy in ("always", "missing", "never"):
+        pull_args = ["--pull", pull_policy]
 
     for step in req.steps:
         network_flag = ["--network", "none"] if step.network == "none" else ["--network", "bridge"]
@@ -72,6 +119,7 @@ def run_job(req: RunRequest):
             "--rm",
             "--name",
             container_name,
+            "--init",
             "--user",
             "1000:1000",
             "--read-only",
@@ -85,6 +133,8 @@ def run_job(req: RunRequest):
             "no-new-privileges",
             "--cap-drop",
             "ALL",
+            "--ipc",
+            "none",
             "--workdir",
             "/workspace",
             "-v",
@@ -93,7 +143,7 @@ def run_job(req: RunRequest):
             f"{host_output_dir}:/output:rw",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=256m",
-        ] + network_flag + [
+        ] + network_flag + pull_args + [
             req.sandbox_image,
             "bash",
             "-lc",
@@ -105,6 +155,7 @@ def run_job(req: RunRequest):
 
         step_script = f"""
 set -euo pipefail
+mkdir -p /output
 export HOME=/workspace
 export OUTPUT_DIR=/output
 {f"export {env_exports}" if env_exports else ""}
@@ -123,6 +174,14 @@ echo "== Matrix Lab step: {step.name} =="
                     stderr=out.stderr,
                 )
             )
+
+            # Write last step status for debugging
+            try:
+                with open(os.path.join(host_output_dir, "_last_step.txt"), "w", encoding="utf-8") as f:
+                    f.write(f"name={step.name}\nexit_code={out.exit_code}\n")
+            except Exception:
+                pass
+
             if out.exit_code != 0:
                 break
 
@@ -134,6 +193,22 @@ echo "== Matrix Lab step: {step.name} =="
                     exit_code=124,
                     stdout=getattr(e, "stdout", "") or "",
                     stderr=(getattr(e, "stderr", "") or "") + "\nTIMEOUT",
+                )
+            )
+            break
+
+        except FileNotFoundError as e:
+            # The exact error you hit
+            results.append(
+                StepResult(
+                    name=step.name,
+                    exit_code=999,
+                    stdout="",
+                    stderr=(
+                        "Runner error: docker CLI not found. "
+                        "Fix Runner image to include docker-ce-cli.\n"
+                        f"detail={e}"
+                    ),
                 )
             )
             break

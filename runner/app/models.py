@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Dict, List, Literal, Optional
-
 from pydantic import BaseModel, Field
 
 NetworkMode = Literal["none", "egress"]
@@ -24,7 +23,6 @@ class RunRequest(BaseModel):
     mem_limit_mb: int = 1024
     pids_limit: int = 256
 
-    # Default to python sandbox; orchestrator/tools should override.
     sandbox_image: str = "matrix-lab-sandbox-python:latest"
 
 

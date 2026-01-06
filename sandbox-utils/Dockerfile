@@ -1,5 +1,6 @@
 FROM debian:bookworm-slim
 
+# Install core utils + grep/sed explicitly for script compatibility
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     coreutils \
@@ -13,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     file \
     findutils \
+    grep \
+    sed \
     jq \
     ripgrep \
  && rm -rf /var/lib/apt/lists/*

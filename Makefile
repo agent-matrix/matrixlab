@@ -8,6 +8,9 @@ PIP := $(VENV)/bin/pip
 MCP_CLI := $(VENV)/bin/matrixlab-mcp
 INSPECT_CLI := $(VENV)/bin/matrixlab-inspect
 
+# Optional dev UI launcher (npx inspector wrapper)
+DEV_INSPECTOR := tools/inspector_ui.py
+
 RUNNER_URL ?= http://localhost:8000
 
 # stamp file so we don't reinstall deps every time
@@ -48,9 +51,6 @@ SB_JAVA_CTX := ./sandbox-java
 SB_DOTNET_CTX := ./sandbox-dotnet
 SB_BUILD_CTX := ./sandbox-build
 
-# NEW: Dev Inspector UI launcher
-DEV_INSPECTOR := tools/inspector_ui.py
-
 .PHONY: help install reinstall build run stop down purge logs mcp inspect inspector clean status \
 	docker-login docker-check-images build-images push-images release
 
@@ -62,7 +62,7 @@ help:
 	@echo "  make reinstall       - force reinstall dev deps"
 	@echo "  make mcp             - run MCP stdio server (requires Runner running)"
 	@echo "  make inspect         - run MCP inspector smoke check (JSON-RPC)"
-	@echo "  make inspector   - launch native MCP Inspector UI (npx) pre-wired to matrixlab-mcp"
+	@echo "  make inspector       - launch native MCP Inspector UI (npx) pre-wired to matrixlab-mcp"
 	@echo ""
 	@echo "Runtime (local):"
 	@echo "  make build           - docker compose build (Runner + sandbox images)"
@@ -148,7 +148,7 @@ inspect: $(INSTALL_STAMP)
 		exit 1; \
 	fi
 
-# NEW: Native MCP Inspector UI (npx) pre-wired to matrixlab-mcp.
+# Native MCP Inspector UI (npx) pre-wired to matrixlab-mcp.
 # This opens the browser UI and auto-runs the server command with RUNNER_URL.
 inspector: $(INSTALL_STAMP)
 	@export RUNNER_URL="$(RUNNER_URL)"; \
@@ -184,6 +184,7 @@ docker-check-images:
 	@test -d "$(SB_BUILD_CTX)" || (echo "Missing $(SB_BUILD_CTX)"; exit 1)
 	@echo "✅ Build contexts present"
 
+# Build & tag images for publishing
 build-images: docker-check-images
 	@echo "🏗️  Building images (VERSION=$(VERSION))"
 	@set -e; \
@@ -214,6 +215,7 @@ build-images: docker-check-images
 	fi
 	@echo "✅ Built images"
 
+# Push images to registry
 push-images:
 	@echo "🚀 Pushing images to $(REGISTRY)/$(DOCKERHUB_NAMESPACE)"
 	@docker push "$(RUNNER_IMAGE):$(VERSION)"
@@ -238,5 +240,6 @@ push-images:
 	fi
 	@echo "✅ Pushed images"
 
+# One command release
 release: build-images push-images
 	@echo "✅ Release complete: VERSION=$(VERSION), latest=$(PUSH_LATEST)"
