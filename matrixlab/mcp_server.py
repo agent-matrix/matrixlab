@@ -711,10 +711,34 @@ async def call_tool(
             ref = arguments.get("ref")
             path = _sanitize_rel_path(arguments.get("path", "."))
             depth = int(arguments.get("depth", 4))
+
             cmd = f"find {_q(path)} -maxdepth {depth} \\( -type f -o -type d \\) | sed 's#^\\./##' | head -n 2000"
             res = await _run_utils_one_shot_from_repo(repo_url, ref, cmd, timeout=120)
-            out = _read_artifact_text(res.get("artifacts_zip_base64"), "result.txt")
-            return _text({"output": _truncate(out, 15000) or "[No output]", "hints": _runner_failure_hints(res)})
+
+            b64 = res.get("artifacts_zip_base64")
+            out = (_read_artifact_text(b64, "result.txt") or "").strip()
+
+            if out:
+                return _text(out)
+
+            # If empty, show the REAL reason: runner step errors
+            results = res.get("results") or []
+            hints: List[str] = []
+
+            for r in results:
+                if (r.get("exit_code") or 0) != 0:
+                    hints.append(
+                        f"Step '{r.get('name')}' failed (exit_code={r.get('exit_code')}). "
+                        f"stderr: {(_truncate(r.get('stderr') or '', 2000)).strip()}"
+                    )
+
+            if not hints:
+                hints.append(
+                    "No result.txt produced. This usually means the clone step failed or the command produced no output. "
+                    "Inspect res.result.results for step stderr."
+                )
+
+            return _text(json.dumps({"output": "[No output]", "hints": hints, "raw_results": results}, ensure_ascii=False))
 
         if name == "read_file":
             repo_url = arguments["repo_url"]

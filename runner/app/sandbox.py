@@ -91,8 +91,10 @@ def run_job(req: RunRequest):
     host_output_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-out-")
     host_workspace_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-ws-")
 
-    # ensure dirs writable from container uid 1000
-    subprocess.run(["chmod", "777", host_workspace_dir, host_output_dir], check=False)
+    # ensure dirs writable from container.
+    # Docker bind-mount permissions can be tricky (WSL/Linux mismatch).
+    # 777 ensures anyone (container user) can write.
+    subprocess.run(["chmod", "-R", "777", host_workspace_dir, host_output_dir], check=False)
 
     # ensure /output has a marker even if we fail early
     try:
@@ -120,8 +122,8 @@ def run_job(req: RunRequest):
             "--name",
             container_name,
             "--init",
-            "--user",
-            "1000:1000",
+            # NOTE: Removed "--user 1000:1000" to allow running as root in container.
+            # This fixes "Permission denied" on bind mounts in WSL/Linux.
             "--read-only",
             "--pids-limit",
             str(req.pids_limit),
@@ -231,3 +233,66 @@ echo "== Matrix Lab step: {step.name} =="
         "results": [r.model_dump() for r in results],
         "artifacts_zip_base64": artifacts_b64,
     }
+
+
+# =============================================================================
+# Health Check Helpers
+# =============================================================================
+
+def docker_info() -> dict:
+    # Check docker binary + daemon connectivity
+    try:
+        out = _run_local(["docker", "version"], timeout=5)
+        ok = out.exit_code == 0
+        return {
+            "ok": ok,
+            "exit_code": out.exit_code,
+            "stdout": out.stdout[-2000:],
+            "stderr": out.stderr[-2000:],
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _image_exists(image: str) -> bool:
+    out = _run_local(["docker", "image", "inspect", image], timeout=5)
+    return out.exit_code == 0
+
+
+def sandbox_selftest() -> dict:
+    """
+    Runs a tiny command in each sandbox to validate the toolchain.
+    """
+    images = {
+        "utils": ("matrix-lab-sandbox-utils:latest", "sh -lc 'command -v find && command -v rg && command -v unzip && echo OK'"),
+        "python": ("matrix-lab-sandbox-python:latest", "sh -lc 'python -V && pip -V && echo OK'"),
+        "node": ("matrix-lab-sandbox-node:latest", "sh -lc 'node -v && npm -v && echo OK'"),
+        "go": ("matrix-lab-sandbox-go:latest", "sh -lc 'go version && echo OK'"),
+        "rust": ("matrix-lab-sandbox-rust:latest", "sh -lc 'rustc -V && cargo -V && echo OK'"),
+    }
+
+    results = {"status": "ok", "sandboxes": {}}
+    docker_ok = docker_info().get("ok")
+    if not docker_ok:
+        results["status"] = "error"
+        results["error"] = "docker not available to runner"
+        return results
+
+    for name, (img, cmd) in images.items():
+        if not _image_exists(img):
+            results["sandboxes"][name] = {"ok": False, "error": f"image not found locally: {img}"}
+            results["status"] = "degraded"
+            continue
+
+        p = _run_local(["docker", "run", "--rm", img, "bash", "-lc", cmd], timeout=30)
+        results["sandboxes"][name] = {
+            "ok": p.exit_code == 0,
+            "exit_code": p.exit_code,
+            "stdout": p.stdout[-2000:],
+            "stderr": p.stderr[-2000:],
+            "image": img,
+        }
+        if p.exit_code != 0:
+            results["status"] = "degraded"
+
+    return results
