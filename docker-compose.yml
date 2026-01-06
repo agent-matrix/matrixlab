@@ -3,16 +3,27 @@ services:
     build:
       context: ./runner
     image: matrix-lab-runner:latest
+    # IMPORTANT: runner must be able to talk to the host Docker daemon to spawn sandboxes.
+    # For reliability across Linux/WSL/macOS, run runner as root when using docker.sock.
+    user: "0:0"
     ports:
       - "8000:8000"
     volumes:
-      # Local dev only. In production, do not mount docker.sock into a container.
+      # DEV / SINGLE-HOST MODE:
+      # This project’s current architecture uses the host Docker daemon via docker.sock.
+      # In hardened production, replace this with a dedicated executor runtime instead of mounting docker.sock.
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
-      # Runner-side behavior controls (optional, but useful)
+      # Runner-side behavior controls (optional)
       - MATRIXLAB_DOCKER_PULL=missing
       - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read(); print('ok')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
     restart: unless-stopped
     depends_on:
       - sandbox-utils
