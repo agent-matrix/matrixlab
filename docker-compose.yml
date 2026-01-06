@@ -9,6 +9,19 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+    restart: unless-stopped
+    depends_on:
+      - sandbox-utils
+      - sandbox-python
+      - sandbox-go
+      - sandbox-rust
+      - sandbox-node
+
+  # Matrix utility sandbox for unzip/inspect/tree/grep/detect
+  sandbox-utils:
+    build:
+      context: ./sandbox-utils
+    image: matrix-lab-sandbox-utils:latest
 
   sandbox-python:
     build:
@@ -40,6 +53,7 @@ services:
   #     - REPO_REF=main
   #   depends_on:
   #     - runner
+  #     - sandbox-utils
   #     - sandbox-python
   #     - sandbox-go
   #     - sandbox-rust

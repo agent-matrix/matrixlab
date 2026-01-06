@@ -1,12 +1,34 @@
-FROM golang:1.22-bookworm
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
+    bash \
+    coreutils \
     ca-certificates \
+    git \
     curl \
+    unzip \
+    zip \
+    tar \
+    gzip \
+    xz-utils \
+    file \
+    findutils \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    gdb \
+    strace \
  && rm -rf /var/lib/apt/lists/*
 
-# Ensure we have a non-root "sandbox" user. Prefer UID 1000 if available.
+# (Optional) Common libs that many projects need; add more as you encounter failures
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl-dev \
+    zlib1g-dev \
+    libffi-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Create/ensure non-root "sandbox" user (UID-safe)
 RUN set -eux; \
     existing="$(getent passwd 1000 | cut -d: -f1 || true)"; \
     if [ -n "$existing" ] && [ "$existing" != "sandbox" ]; then \
@@ -20,7 +42,4 @@ RUN set -eux; \
 
 WORKDIR /workspace
 USER sandbox
-
-# Keep caches inside /workspace to avoid writing to root-owned locations
-ENV GOMODCACHE=/workspace/.cache/gomod \
-    GOCACHE=/workspace/.cache/gocache
+ENV HOME=/home/sandbox

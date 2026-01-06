@@ -1,0 +1,13 @@
+LICENSE
+README.md
+pyproject.toml
+matrixlab/__init__.py
+matrixlab/installer.py
+matrixlab/mcp_inspector.py
+matrixlab/mcp_server.py
+matrixlab.egg-info/PKG-INFO
+matrixlab.egg-info/SOURCES.txt
+matrixlab.egg-info/dependency_links.txt
+matrixlab.egg-info/entry_points.txt
+matrixlab.egg-info/requires.txt
+matrixlab.egg-info/top_level.txt

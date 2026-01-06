@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import os
 import shlex
@@ -8,7 +10,7 @@ import zipfile
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .main import RunRequest, StepResult
+from .models import RunRequest, StepResult
 
 
 @dataclass
@@ -99,9 +101,7 @@ def run_job(req: RunRequest):
 
         env_exports = ""
         if step.env:
-            env_exports = " ".join([
-                f"{shlex.quote(k)}={shlex.quote(v)}" for k, v in step.env.items()
-            ])
+            env_exports = " ".join([f"{shlex.quote(k)}={shlex.quote(v)}" for k, v in step.env.items()])
 
         step_script = f"""
 set -euo pipefail

@@ -1,0 +1,7 @@
+mcp==1.2.0
+requests<3,>=2.32.3
+
+[dev]
+build>=1.2.2
+twine>=5.1.1
+ruff>=0.6.0
