@@ -71,7 +71,7 @@ flowchart LR
   S -->|stdout/stderr + /output artifacts| R
   R -->|results + artifacts_zip_base64| O
   O --> U
-````
+```
 
 ---
 
