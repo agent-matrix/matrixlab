@@ -1,3 +1,4 @@
 [console_scripts]
 matrixlab-inspect = matrixlab.mcp_inspector:cli
 matrixlab-mcp = matrixlab.mcp_server:cli
+matrixlab-start = tools.bootstrap:main

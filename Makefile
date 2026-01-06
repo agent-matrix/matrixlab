@@ -8,6 +8,12 @@ PIP := $(VENV)/bin/pip
 MCP_CLI := $(VENV)/bin/matrixlab-mcp
 INSPECT_CLI := $(VENV)/bin/matrixlab-inspect
 
+# Optional dev UI launcher (npx inspector wrapper)
+DEV_INSPECTOR := tools/inspector_ui.py
+
+# NEW: bootstrap launcher (must exist)
+BOOTSTRAP := tools/bootstrap.py
+
 RUNNER_URL ?= http://localhost:8000
 
 # stamp file so we don't reinstall deps every time
@@ -15,6 +21,9 @@ INSTALL_STAMP := $(VENV)/.installed
 
 # Optional: show MCP logs clearly (stdio server logs to stderr; keep stdout clean)
 MCP_LOG_LEVEL ?= INFO
+
+# NEW: autostart control (1 by default)
+MATRIXLAB_AUTOSTART ?= 1
 
 # -----------------------------
 # Docker image publishing config
@@ -48,21 +57,22 @@ SB_JAVA_CTX := ./sandbox-java
 SB_DOTNET_CTX := ./sandbox-dotnet
 SB_BUILD_CTX := ./sandbox-build
 
-# NEW: Dev Inspector UI launcher
-DEV_INSPECTOR := tools/inspector_ui.py
-
-.PHONY: help install reinstall build run stop down purge logs mcp inspect inspector clean status \
+.PHONY: help install reinstall build run stop down purge logs mcp inspect inspector start clean status \
 	docker-login docker-check-images build-images push-images release
 
 help:
 	@echo "Matrix Lab (Matrix sandbox flow)"
+	@echo ""
+	@echo "Bootstrap / One-command start:"
+	@echo "  make start           - ensure Runner+sandboxes are up + healthy, then launch MCP (via tools/bootstrap.py)"
+	@echo "                         (set MATRIXLAB_AUTOSTART=1 to allow compose up from bootstrap)"
 	@echo ""
 	@echo "Python/MCP:"
 	@echo "  make install         - create venv and install matrixlab (only if needed)"
 	@echo "  make reinstall       - force reinstall dev deps"
 	@echo "  make mcp             - run MCP stdio server (requires Runner running)"
 	@echo "  make inspect         - run MCP inspector smoke check (JSON-RPC)"
-	@echo "  make inspector   - launch native MCP Inspector UI (npx) pre-wired to matrixlab-mcp"
+	@echo "  make inspector       - launch native MCP Inspector UI (npx) pre-wired to matrixlab-mcp"
 	@echo ""
 	@echo "Runtime (local):"
 	@echo "  make build           - docker compose build (Runner + sandbox images)"
@@ -79,11 +89,12 @@ help:
 	@echo "  make release         - build-images + push-images"
 	@echo ""
 	@echo "Variables:"
-	@echo "  DOCKERHUB_NAMESPACE=ruslanmv      (set to your Docker Hub username/org)"
-	@echo "  VERSION=0.1.0                     (tag to publish)"
-	@echo "  PUSH_LATEST=1                     (also push :latest)"
-	@echo "  PLATFORMS=linux/amd64,linux/arm64  (optional multi-arch push)"
+	@echo "  MATRIXLAB_AUTOSTART=0              (default: do NOT start docker compose automatically)"
 	@echo "  RUNNER_URL=http://localhost:8000  (runner endpoint used by MCP server)"
+	@echo "  DOCKERHUB_NAMESPACE=ruslanmv       (set to your Docker Hub username/org)"
+	@echo "  VERSION=0.1.0                      (tag to publish)"
+	@echo "  PUSH_LATEST=1                      (also push :latest)"
+	@echo "  PLATFORMS=linux/amd64,linux/arm64   (optional multi-arch push)"
 
 # Install only when inputs change
 install: $(INSTALL_STAMP)
@@ -111,7 +122,7 @@ status:
 	@docker compose ps
 	@echo ""
 	@echo "Runner health (best effort):"
-	@curl -s "$(RUNNER_URL)/health" || true
+	@curl -fsS "$(RUNNER_URL)/health" || true
 	@echo ""
 
 logs:
@@ -126,6 +137,24 @@ down:
 purge:
 	docker compose down -v --rmi local --remove-orphans
 	@echo "✅ Purged compose containers, volumes, and local images"
+
+# -----------------------------
+# NEW: start = bootstrap + then MCP
+# Ensures runner is running + healthy before launching MCP.
+# This uses tools/bootstrap.py (recommended portable flow).
+# -----------------------------
+start: $(INSTALL_STAMP)
+	@export RUNNER_URL="$(RUNNER_URL)"; \
+	export MATRIXLAB_LOG_LEVEL="$(MCP_LOG_LEVEL)"; \
+	export MATRIXLAB_AUTOSTART="$(MATRIXLAB_AUTOSTART)"; \
+	if [ ! -f "$(BOOTSTRAP)" ]; then \
+		echo "ERROR: $(BOOTSTRAP) not found. Create tools/bootstrap.py (Option B) first." 1>&2; \
+		exit 1; \
+	fi; \
+	echo "🚀 Starting Matrix Lab via bootstrap"; \
+	echo "   RUNNER_URL=$(RUNNER_URL)"; \
+	echo "   MATRIXLAB_AUTOSTART=$(MATRIXLAB_AUTOSTART)"; \
+	"$(PY)" "$(BOOTSTRAP)"
 
 # MCP server (stdio). It will print startup status to stderr (safe for MCP).
 mcp: $(INSTALL_STAMP)
@@ -148,7 +177,7 @@ inspect: $(INSTALL_STAMP)
 		exit 1; \
 	fi
 
-# NEW: Native MCP Inspector UI (npx) pre-wired to matrixlab-mcp.
+# Native MCP Inspector UI (npx) pre-wired to matrixlab-mcp.
 # This opens the browser UI and auto-runs the server command with RUNNER_URL.
 inspector: $(INSTALL_STAMP)
 	@export RUNNER_URL="$(RUNNER_URL)"; \
@@ -184,6 +213,7 @@ docker-check-images:
 	@test -d "$(SB_BUILD_CTX)" || (echo "Missing $(SB_BUILD_CTX)"; exit 1)
 	@echo "✅ Build contexts present"
 
+# Build & tag images for publishing
 build-images: docker-check-images
 	@echo "🏗️  Building images (VERSION=$(VERSION))"
 	@set -e; \
@@ -214,6 +244,7 @@ build-images: docker-check-images
 	fi
 	@echo "✅ Built images"
 
+# Push images to registry
 push-images:
 	@echo "🚀 Pushing images to $(REGISTRY)/$(DOCKERHUB_NAMESPACE)"
 	@docker push "$(RUNNER_IMAGE):$(VERSION)"
@@ -238,5 +269,6 @@ push-images:
 	fi
 	@echo "✅ Pushed images"
 
+# One command release
 release: build-images push-images
 	@echo "✅ Release complete: VERSION=$(VERSION), latest=$(PUSH_LATEST)"
