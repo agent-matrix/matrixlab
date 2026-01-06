@@ -66,8 +66,8 @@ matrixlab is designed for **safe automation**: it can be invoked by humans, CI p
 ```mermaid
 flowchart LR
   U[User / Agent / CI] -->|MCP tool call or HTTP| O[Orchestrator / Client]
-  O -->|POST /run| R[Runner (FastAPI)]
-  R -->|docker run per step| S[Sandbox Container\n(Python/Go/Rust/Node)]
+  O -->|POST /run| R[Runner FastAPI]
+  R -->|docker run per step| S[Sandbox Container\n Python/Go/Rust/Node ]
   S -->|stdout/stderr + /output artifacts| R
   R -->|results + artifacts_zip_base64| O
   O --> U
