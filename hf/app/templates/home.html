@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MatrixLab Sandbox</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; background: #0a0a0f; color: #e4e4e7; min-height: 100vh; }
+    .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; }
+    .gradient-text { background: linear-gradient(135deg, #06b6d4, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .status-success { color: #22c55e; } .status-warning { color: #eab308; } .status-error { color: #ef4444; }
+    .badge { display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <nav class="sticky top-0 z-50 border-b border-white/5 bg-[#0a0a0f]/80 backdrop-blur-xl">
+    <div class="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm">ML</div>
+        <span class="gradient-text text-lg font-bold">MatrixLab Sandbox</span>
+      </a>
+      <a href="/health" class="text-sm text-zinc-500 hover:text-cyan-400">API</a>
+    </div>
+  </nav>
+
+  <main class="max-w-5xl mx-auto px-6 py-12">
+    {% if error %}
+    <div class="mb-6 p-4 rounded-xl bg-red-900/20 border border-red-500/20 text-red-300 text-sm">{{ error }}</div>
+    {% endif %}
+
+    <!-- Upload Section -->
+    <div class="text-center mb-12">
+      <h1 class="text-4xl font-extrabold mb-4"><span class="gradient-text">Verify Your Agent Project</span></h1>
+      <p class="text-zinc-400 text-lg max-w-xl mx-auto mb-8">Upload a generated project ZIP. We'll check syntax, security, dependencies, and run tests.</p>
+
+      <form action="/upload" method="POST" enctype="multipart/form-data" class="glass p-8 max-w-lg mx-auto">
+        <div class="mb-6">
+          <label class="block text-sm font-semibold text-zinc-300 mb-2">Project ZIP</label>
+          <input type="file" name="file" accept=".zip" required
+            class="w-full text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-cyan-500/20 file:text-cyan-400 hover:file:bg-cyan-500/30 cursor-pointer">
+          <p class="text-xs text-zinc-500 mt-2">Max 50MB. Accepts ZIP files from agent-generator or any Python/YAML project.</p>
+        </div>
+        <button type="submit" class="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold text-sm hover:shadow-lg hover:shadow-cyan-500/20 transition-all">
+          Verify Project
+        </button>
+      </form>
+    </div>
+
+    <!-- Verification Pipeline -->
+    <div class="glass p-6 mb-12">
+      <h2 class="text-lg font-bold text-zinc-200 mb-4">Verification Pipeline</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center text-sm">
+        <div class="p-4 rounded-xl bg-white/5">
+          <div class="text-2xl mb-2">📦</div>
+          <div class="font-semibold text-zinc-300">Unpack</div>
+          <div class="text-zinc-500 text-xs">Extract ZIP contents</div>
+        </div>
+        <div class="p-4 rounded-xl bg-white/5">
+          <div class="text-2xl mb-2">🔍</div>
+          <div class="font-semibold text-zinc-300">Detect</div>
+          <div class="text-zinc-500 text-xs">Language & framework</div>
+        </div>
+        <div class="p-4 rounded-xl bg-white/5">
+          <div class="text-2xl mb-2">🛡️</div>
+          <div class="font-semibold text-zinc-300">Validate</div>
+          <div class="text-zinc-500 text-xs">Syntax + security scan</div>
+        </div>
+        <div class="p-4 rounded-xl bg-white/5">
+          <div class="text-2xl mb-2">✅</div>
+          <div class="font-semibold text-zinc-300">Test</div>
+          <div class="text-zinc-500 text-xs">Import check + pytest</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Runs -->
+    {% if runs %}
+    <h2 class="text-lg font-bold text-zinc-200 mb-4">Recent Verifications</h2>
+    <div class="space-y-3">
+      {% for run in runs %}
+      <a href="/runs/{{ run.id }}" class="glass block p-4 hover:border-cyan-500/30 transition-all">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="badge {% if run.status == 'success' %}bg-green-500/10 text-green-400{% elif run.status == 'warning' %}bg-yellow-500/10 text-yellow-400{% else %}bg-red-500/10 text-red-400{% endif %}">{{ run.status }}</span>
+            <span class="text-sm font-medium text-zinc-300">{{ run.filename }}</span>
+            <span class="text-xs text-zinc-500">{{ run.language }} / {{ run.framework }}</span>
+          </div>
+          <span class="text-xs text-zinc-600">{{ run.id }}</span>
+        </div>
+        <p class="text-xs text-zinc-500 mt-1">{{ run.summary }}</p>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </main>
+
+  <footer class="border-t border-white/5 py-8 text-center text-zinc-600 text-sm">
+    <span class="gradient-text font-semibold">MatrixLab Sandbox</span> v1.0.0 — Agent Verification Service
+  </footer>
+</body>
+</html>
