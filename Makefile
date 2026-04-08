@@ -15,6 +15,10 @@ DEV_INSPECTOR := tools/inspector_ui.py
 BOOTSTRAP := tools/bootstrap.py
 
 RUNNER_URL ?= http://localhost:8000
+HF_SPACE_DIR ?= hf
+HF_DEPLOY_DIR ?= .dist/hf-space
+MATRIX_REPOS_CONFIG ?= configs/agent_matrix_repos.json
+MATRIXLAB_HF_URL ?= http://localhost:7860
 
 # stamp file so we don't reinstall deps every time
 INSTALL_STAMP := $(VENV)/.installed
@@ -57,7 +61,8 @@ SB_JAVA_CTX := ./sandbox-java
 SB_DOTNET_CTX := ./sandbox-dotnet
 SB_BUILD_CTX := ./sandbox-build
 
-.PHONY: help install reinstall build run stop down purge logs mcp inspect inspector start clean status \
+.PHONY: help install reinstall build run stop down purge logs mcp inspect inspector start clean status test \
+	test-python test-runner-api test-hf hf-build hf-deploy-tree matrix-maintain-plan matrix-maintain-run \
 	docker-login docker-check-images build-images push-images release
 
 help:
@@ -70,6 +75,7 @@ help:
 	@echo "Python/MCP:"
 	@echo "  make install         - create venv and install matrixlab (only if needed)"
 	@echo "  make reinstall       - force reinstall dev deps"
+	@echo "  make test            - run local static checks/smoke imports"
 	@echo "  make mcp             - run MCP stdio server (requires Runner running)"
 	@echo "  make inspect         - run MCP inspector smoke check (JSON-RPC)"
 	@echo "  make inspector       - launch native MCP Inspector UI (npx) pre-wired to matrixlab-mcp"
@@ -82,6 +88,10 @@ help:
 	@echo "  make stop            - stop services"
 	@echo "  make down            - remove containers"
 	@echo "  make purge           - full reset: containers + volumes + images created by compose"
+	@echo "  make hf-build        - build Hugging Face Space Docker image from hf/"
+	@echo "  make hf-deploy-tree  - build clean .dist/hf-space deploy tree for CI sync"
+	@echo "  make matrix-maintain-plan - print planned maintenance payloads for agent-matrix repos"
+	@echo "  make matrix-maintain-run  - execute maintenance payloads via HF backend /repo/run"
 	@echo ""
 	@echo "Publishing (Docker Hub/Registry):"
 	@echo "  make build-images    - build & tag all images for publishing"
@@ -95,6 +105,18 @@ help:
 	@echo "  VERSION=0.1.0                      (tag to publish)"
 	@echo "  PUSH_LATEST=1                      (also push :latest)"
 	@echo "  PLATFORMS=linux/amd64,linux/arm64   (optional multi-arch push)"
+
+test: test-python test-runner-api test-hf
+	@echo "✅ All local checks passed"
+
+test-python:
+	python -m compileall matrixlab runner/app hf/app
+
+test-runner-api:
+	python -c 'from runner.app.main import app; routes={r.path for r in app.routes}; req={"/run","/health","/environments","/environments/{environment_id}/bootstrap","/environments/{environment_id}/run-task"}; miss=sorted(req-routes); (__import__("sys").exit(f"missing runner routes: {miss}") if miss else print("runner routes OK"))'
+
+test-hf:
+	cd "$(HF_SPACE_DIR)" && python -c 'from app.main import app; routes={r.path for r in app.routes}; req={"/health","/profiles","/repo/run"}; miss=sorted(req-routes); (__import__("sys").exit(f"missing hf routes: {miss}") if miss else print("hf routes OK"))'
 
 # Install only when inputs change
 install: $(INSTALL_STAMP)
@@ -193,6 +215,23 @@ inspector: $(INSTALL_STAMP)
 clean:
 	rm -rf "$(VENV)"
 	@echo "✅ Removed $(VENV)"
+
+hf-build:
+	docker build -t matrixlab-hf-space:latest "$(HF_SPACE_DIR)"
+
+hf-deploy-tree:
+	@set -e; \
+	mkdir -p "$(HF_DEPLOY_DIR)"; \
+	rm -rf "$(HF_DEPLOY_DIR)"; \
+	mkdir -p "$(HF_DEPLOY_DIR)"; \
+	cp -r "$(HF_SPACE_DIR)"/. "$(HF_DEPLOY_DIR)"/; \
+	echo "✅ HF deploy tree ready at $(HF_DEPLOY_DIR)"
+
+matrix-maintain-plan:
+	python tools/matrix_maintainer.py --config "$(MATRIX_REPOS_CONFIG)" --hf-url "$(MATRIXLAB_HF_URL)"
+
+matrix-maintain-run:
+	python tools/matrix_maintainer.py --config "$(MATRIX_REPOS_CONFIG)" --hf-url "$(MATRIXLAB_HF_URL)" --execute
 
 # -----------------------------
 # Publishing targets

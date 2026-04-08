@@ -1,0 +1,27 @@
+{
+  "organization": "agent-matrix",
+  "default_branch": "main",
+  "default_command": "pytest -q || python -m unittest discover || python -m compileall .",
+  "repos": [
+    {"name": "matrix-hub"},
+    {"name": "matrix-guardian"},
+    {"name": "matrix-ai"},
+    {"name": "matrix-architect"},
+    {"name": "matrix-system"},
+    {"name": "matrix-treasury"},
+    {"name": "matrix-hub-admin"},
+    {"name": "network.matrixhub"},
+    {"name": "catalog"},
+    {"name": "a2a-validator"},
+    {"name": "matrix-python-sdk"},
+    {"name": "matrix-cli"},
+    {"name": "mcp_ingest"},
+    {"name": "mcp-template"},
+    {"name": "matrix-protocol-helper"},
+    {"name": "matrix-llm"},
+    {"name": "watsonx-agent-creator"},
+    {"name": "matrixlink"},
+    {"name": "matrixhub-db"},
+    {"name": "matrix-infra"}
+  ]
+}

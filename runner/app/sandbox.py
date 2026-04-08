@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import base64
 import os
+import shutil
 import shlex
 import subprocess
 import tempfile
 import uuid
 import zipfile
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .models import RunRequest, StepResult
 
@@ -76,7 +77,24 @@ def _zip_dir_to_base64(dir_path: str) -> str:
             os.remove(zip_path)
 
 
-def run_job(req: RunRequest):
+def _copy_seed_workspace(seed_dir: str, ws_dir: str) -> None:
+    if not os.path.isdir(seed_dir):
+        raise RuntimeError(f"workspace_seed_path does not exist or is not a directory: {seed_dir}")
+
+    for entry in os.listdir(seed_dir):
+        src = os.path.join(seed_dir, entry)
+        dst = os.path.join(ws_dir, entry)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+
+
+def _run_job_with_details(
+    req: RunRequest,
+    *,
+    workspace_seed_path: Optional[str] = None,
+) -> Tuple[dict, str, str]:
     runner_preflight()
 
     job_id = str(uuid.uuid4())
@@ -106,6 +124,9 @@ def run_job(req: RunRequest):
     local_ws_dir = os.path.join(local_job_dir, "ws")
     os.makedirs(local_out_dir, exist_ok=True)
     os.makedirs(local_ws_dir, exist_ok=True)
+
+    if workspace_seed_path:
+        _copy_seed_workspace(workspace_seed_path, local_ws_dir)
 
     # 4. Define Host paths for Docker Volume mounting
     host_out_dir = os.path.join(host_job_dir, "out")
@@ -247,11 +268,21 @@ echo "== Matrix Lab step: {step.name} =="
     # import shutil
     # shutil.rmtree(local_job_dir, ignore_errors=True)
 
-    return {
+    result = {
         "job_id": job_id,
         "results": [r.model_dump() for r in results],
         "artifacts_zip_base64": artifacts_b64,
     }
+    return result, local_ws_dir, local_out_dir
+
+
+def run_job(req: RunRequest, workspace_seed_path: Optional[str] = None):
+    result, _, _ = _run_job_with_details(req, workspace_seed_path=workspace_seed_path)
+    return result
+
+
+def run_job_with_details(req: RunRequest, workspace_seed_path: Optional[str] = None) -> Tuple[dict, str, str]:
+    return _run_job_with_details(req, workspace_seed_path=workspace_seed_path)
 
 
 # =============================================================================
