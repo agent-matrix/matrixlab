@@ -7,3 +7,9 @@ __pycache__/
 *.log
 * copy* 
 /runner_tmp
+frontend/node_modules/
+frontend/dist/
+frontend/.matrixlab-frontend.pid
+frontend/.matrixlab-frontend.log
+/runner_envs
+/runner_state

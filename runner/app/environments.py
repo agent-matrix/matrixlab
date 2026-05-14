@@ -143,6 +143,19 @@ class EnvironmentManager:
         data = self._read_meta()
         return {k: EnvironmentRecord.model_validate(v) for k, v in data.items()}
 
+    def delete(self, environment_id: str) -> bool:
+        with self._lock:
+            data = self._read_meta()
+            if environment_id not in data:
+                return False
+            env = EnvironmentRecord.model_validate(data.pop(environment_id))
+            if env.cache_workspace_dir:
+                cache_parent = os.path.dirname(os.path.dirname(env.cache_workspace_dir))
+                if cache_parent.startswith(self.cache_root):
+                    shutil.rmtree(cache_parent, ignore_errors=True)
+            self._write_meta(data)
+            return True
+
     def bootstrap(self, environment_id: str, force_rebuild: bool = False) -> EnvironmentBootstrapResponse:
         with self._lock:
             env = self.get(environment_id)

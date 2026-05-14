@@ -20,6 +20,12 @@ HF_DEPLOY_DIR ?= .dist/hf-space
 MATRIX_REPOS_CONFIG ?= configs/agent_matrix_repos.json
 MATRIXLAB_HF_URL ?= http://localhost:7860
 
+FRONTEND_DIR := frontend
+FRONTEND_URL ?= http://localhost:5173
+FRONTEND_PID := $(FRONTEND_DIR)/.matrixlab-frontend.pid
+FRONTEND_LOG := $(FRONTEND_DIR)/.matrixlab-frontend.log
+FRONTEND_INSTALL_STAMP := $(FRONTEND_DIR)/node_modules/.matrixlab-installed
+
 # stamp file so we don't reinstall deps every time
 INSTALL_STAMP := $(VENV)/.installed
 
@@ -61,9 +67,9 @@ SB_JAVA_CTX := ./sandbox-java
 SB_DOTNET_CTX := ./sandbox-dotnet
 SB_BUILD_CTX := ./sandbox-build
 
-.PHONY: help install reinstall build run stop down purge logs mcp inspect inspector start clean status test \
-	test-python test-runner-api test-hf hf-build hf-deploy-tree matrix-maintain-plan matrix-maintain-run \
-	docker-login docker-check-images build-images push-images release
+.PHONY: help install reinstall build run run-backend run-frontend stop stop-frontend down purge logs mcp inspect inspector start clean status test \
+	test-python test-runner-api test-hf test-frontend-build hf-build hf-deploy-tree matrix-maintain-plan matrix-maintain-run \
+	frontend-install frontend-dev frontend-build docker-login docker-check-images build-images push-images release
 
 help:
 	@echo "Matrix Lab (Matrix sandbox flow)"
@@ -79,14 +85,22 @@ help:
 	@echo "  make mcp             - run MCP stdio server (requires Runner running)"
 	@echo "  make inspect         - run MCP inspector smoke check (JSON-RPC)"
 	@echo "  make inspector       - launch native MCP Inspector UI (npx) pre-wired to matrixlab-mcp"
+	@echo "  make sandbox-hello   - run a generated hello.py through MatrixLab sandbox"
+	@echo "  make sandbox-repl    - open the local interactive MatrixLab sandbox CLI"
+	@echo "  make frontend-dev    - run the React admin console in development mode"
+	@echo "  make frontend-build  - build the React admin console"
+	@echo ""
+	@echo "Run Commands:"
+	@echo "  make run             - Start both backend and frontend"
+	@echo "  make run-backend     - Start backend only"
+	@echo "  make run-frontend    - Start frontend only"
+	@echo "  make stop            - Stop all running services"
 	@echo ""
 	@echo "Runtime (local):"
 	@echo "  make build           - docker compose build (Runner + sandbox images)"
-	@echo "  make run             - docker compose up -d"
-	@echo "  make status          - show compose status + runner health"
+	@echo "  make status          - show compose status + runner/frontend health"
 	@echo "  make logs            - tail compose logs"
-	@echo "  make stop            - stop services"
-	@echo "  make down            - remove containers"
+	@echo "  make down            - stop frontend and remove backend containers"
 	@echo "  make purge           - full reset: containers + volumes + images created by compose"
 	@echo "  make hf-build        - build Hugging Face Space Docker image from hf/"
 	@echo "  make hf-deploy-tree  - build clean .dist/hf-space deploy tree for CI sync"
@@ -106,20 +120,30 @@ help:
 	@echo "  PUSH_LATEST=1                      (also push :latest)"
 	@echo "  PLATFORMS=linux/amd64,linux/arm64   (optional multi-arch push)"
 
-test: test-python test-runner-api test-hf
+test: test-python test-runner-api test-native-contract test-sandbox-cli test-hf test-frontend-build
 	@echo "✅ All local checks passed"
 
 test-python:
 	python -m compileall matrixlab runner/app hf/app
 
 test-runner-api:
-	python -c 'from runner.app.main import app; routes={r.path for r in app.routes}; req={"/run","/health","/environments","/environments/{environment_id}/bootstrap","/environments/{environment_id}/run-task"}; miss=sorted(req-routes); (__import__("sys").exit(f"missing runner routes: {miss}") if miss else print("runner routes OK"))'
+	python -c 'from runner.app.main import app; routes={r.path for r in app.routes}; req={"/run","/code/run","/chat/run","/snippets/chatbot","/repo/run","/workspaces/upload","/runs/{sandbox_id}/events","/runs/{sandbox_id}/artifacts","/runs/{sandbox_id}/artifacts/{artifact_id:path}","/health","/capabilities","/pool/status","/environments","/environments/{environment_id}/bootstrap","/environments/{environment_id}/run-task","/env/bootstrap","/env/{env_id}/run","/env/{env_id}"}; miss=sorted(req-routes); (__import__("sys").exit(f"missing runner routes: {miss}") if miss else print("runner routes OK"))'
+
+test-native-contract:
+	python scripts/native-contract-smoke.py
+
+test-sandbox-cli:
+	python -m matrixlab.sandbox_cli hello-python --dry-run --json >/tmp/matrixlab-sandbox-cli-smoke.json
+	python -c 'import json; data=json.load(open("/tmp/matrixlab-sandbox-cli-smoke.json")); assert data["request"]["cmd"] == "python hello.py"; assert data["request"]["workspace"]["type"] == "zip"; print("sandbox cli smoke OK")'
 
 test-hf:
 	cd "$(HF_SPACE_DIR)" && python -c 'from app.main import app; routes={r.path for r in app.routes}; req={"/health","/profiles","/repo/run"}; miss=sorted(req-routes); (__import__("sys").exit(f"missing hf routes: {miss}") if miss else print("hf routes OK"))'
 
+test-frontend-build:
+	@if [ -d frontend/node_modules ]; then npm --prefix frontend run build; else echo "frontend dependencies not installed; skipping build (run npm --prefix frontend install)"; fi
+
 # Install only when inputs change
-install: $(INSTALL_STAMP)
+install: $(INSTALL_STAMP) frontend-install
 
 reinstall:
 	@rm -f "$(INSTALL_STAMP)"
@@ -136,9 +160,30 @@ $(INSTALL_STAMP): pyproject.toml
 build:
 	docker compose build
 
-run: build
+run: run-backend run-frontend
+	@echo "✅ MatrixLab backend:  $(RUNNER_URL)"
+	@echo "✅ MatrixLab frontend: $(FRONTEND_URL)"
+
+run-backend: build
 	docker compose up -d
 	@echo "✅ Runner expected at $(RUNNER_URL)"
+
+run-frontend: frontend-install
+	@mkdir -p "$(FRONTEND_DIR)"
+	@if [ -f "$(FRONTEND_PID)" ] && kill -0 "$$(cat "$(FRONTEND_PID)")" 2>/dev/null; then \
+		echo "✅ Frontend already running at $(FRONTEND_URL) (pid $$(cat "$(FRONTEND_PID)"))"; \
+	else \
+		rm -f "$(FRONTEND_PID)"; \
+		echo "🚀 Starting frontend at $(FRONTEND_URL)"; \
+		(cd "$(FRONTEND_DIR)" && VITE_MATRIXLAB_API_URL="$(RUNNER_URL)" nohup npm run dev > .matrixlab-frontend.log 2>&1 & echo $$! > .matrixlab-frontend.pid); \
+		sleep 2; \
+		if [ -f "$(FRONTEND_PID)" ] && kill -0 "$$(cat "$(FRONTEND_PID)")" 2>/dev/null; then \
+			echo "✅ Frontend started at $(FRONTEND_URL) (pid $$(cat "$(FRONTEND_PID)"))"; \
+		else \
+			echo "❌ Frontend failed to start; see $(FRONTEND_LOG)" 1>&2; \
+			exit 1; \
+		fi; \
+	fi
 
 status:
 	@docker compose ps
@@ -146,17 +191,37 @@ status:
 	@echo "Runner health (best effort):"
 	@curl -fsS "$(RUNNER_URL)/health" || true
 	@echo ""
+	@echo "Frontend status:"
+	@if [ -f "$(FRONTEND_PID)" ] && kill -0 "$$(cat "$(FRONTEND_PID)")" 2>/dev/null; then \
+		echo "running at $(FRONTEND_URL) (pid $$(cat "$(FRONTEND_PID)"))"; \
+	else \
+		echo "stopped"; \
+	fi
 
 logs:
 	docker compose logs -f --tail=200
 
-stop:
+stop: stop-frontend
 	docker compose stop
+	@echo "✅ Stopped backend containers and frontend"
 
-down:
+stop-frontend:
+	@if [ -f "$(FRONTEND_PID)" ]; then \
+		PID="$$(cat "$(FRONTEND_PID)")"; \
+		if kill -0 "$$PID" 2>/dev/null; then \
+			echo "Stopping frontend (pid $$PID)"; \
+			pkill -P "$$PID" 2>/dev/null || true; \
+			kill "$$PID" 2>/dev/null || true; \
+		fi; \
+		rm -f "$(FRONTEND_PID)"; \
+	else \
+		echo "Frontend not running"; \
+	fi
+
+down: stop-frontend
 	docker compose down
 
-purge:
+purge: stop-frontend
 	docker compose down -v --rmi local --remove-orphans
 	@echo "✅ Purged compose containers, volumes, and local images"
 
@@ -212,9 +277,30 @@ inspector: $(INSTALL_STAMP)
 	echo "   RUNNER_URL=$(RUNNER_URL)"; \
 	"$(PY)" "$(DEV_INSPECTOR)"
 
+sandbox-hello: $(INSTALL_STAMP)
+	@export RUNNER_URL="$(RUNNER_URL)"; \
+	"$(PY)" -m matrixlab.sandbox_cli hello-python
+
+sandbox-repl: $(INSTALL_STAMP)
+	@export RUNNER_URL="$(RUNNER_URL)"; \
+	"$(PY)" -m matrixlab.sandbox_cli repl
+
+frontend-install: $(FRONTEND_INSTALL_STAMP)
+
+$(FRONTEND_INSTALL_STAMP): $(FRONTEND_DIR)/package.json
+	npm --prefix "$(FRONTEND_DIR)" install
+	@touch "$(FRONTEND_INSTALL_STAMP)"
+	@echo "✅ Installed frontend dependencies in $(FRONTEND_DIR)/node_modules"
+
+frontend-dev: frontend-install
+	VITE_MATRIXLAB_API_URL="$(RUNNER_URL)" npm --prefix "$(FRONTEND_DIR)" run dev
+
+frontend-build: frontend-install
+	npm --prefix "$(FRONTEND_DIR)" run build
+
 clean:
-	rm -rf "$(VENV)"
-	@echo "✅ Removed $(VENV)"
+	rm -rf "$(VENV)" "$(FRONTEND_DIR)/node_modules" "$(FRONTEND_DIR)/dist" "$(FRONTEND_PID)" "$(FRONTEND_LOG)"
+	@echo "✅ Removed $(VENV) and frontend generated files"
 
 hf-build:
 	docker build -t matrixlab-hf-space:latest "$(HF_SPACE_DIR)"

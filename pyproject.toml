@@ -63,6 +63,7 @@ Issues = "https://github.com/agent-matrix/matrixlab/issues"
 matrixlab-mcp = "matrixlab.mcp_server:cli"
 matrixlab-inspect = "matrixlab.mcp_inspector:cli"
 matrixlab-start = "tools.bootstrap:main"
+matrixlab-sandbox = "matrixlab.sandbox_cli:main"
 
 [tool.setuptools]
 include-package-data = false

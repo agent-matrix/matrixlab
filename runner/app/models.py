@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 NetworkMode = Literal["none", "egress"]
@@ -38,6 +38,99 @@ class RunResponse(BaseModel):
     job_id: str
     results: List[StepResult]
     artifacts_zip_base64: Optional[str] = None
+
+
+class WorkspaceRef(BaseModel):
+    type: Literal["zip"] = "zip"
+    upload_id: Optional[str] = None
+    zip_base64: Optional[str] = None
+
+
+class NativeRunRequest(BaseModel):
+    cmd: str = Field(..., min_length=1)
+    cwd: str = "."
+    workspace: Optional[WorkspaceRef] = None
+    env: Dict[str, str] = Field(default_factory=dict)
+    timeout: int = Field(120, ge=1, le=86400)
+    image: str = "python"
+    allow_network: bool = False
+    stdin: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    cpu_limit: float = 1.0
+    mem_limit_mb: int = 1024
+    pids_limit: int = 256
+
+
+class RepoRunRequest(BaseModel):
+    repo_url: str
+    ref: Optional[str] = None
+    cmd: str = Field(..., min_length=1)
+    profile: str = "python"
+    timeout: int = Field(120, ge=1, le=86400)
+    allow_network: bool = False
+    token_ref: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    env: Dict[str, str] = Field(default_factory=dict)
+    cpu_limit: float = 1.0
+    mem_limit_mb: int = 1024
+    pids_limit: int = 256
+
+
+class ArtifactRecord(BaseModel):
+    id: str
+    name: str
+    mime: str = "application/octet-stream"
+    size: int
+
+
+class NativeRunResponse(BaseModel):
+    sandbox_id: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    duration_ms: int
+    timed_out: bool = False
+    truncated: bool = False
+    artifacts: List[ArtifactRecord] = Field(default_factory=list)
+
+
+class CodeRunRequest(BaseModel):
+    language: Literal["python", "javascript", "node", "bash"] = "python"
+    code: str = Field(..., min_length=1, max_length=1_000_000)
+    stdin: Optional[str] = Field(default=None, max_length=1_000_000)
+    packages: List[str] = Field(default_factory=list, max_length=50)
+    timeout: int = Field(120, ge=1, le=86400)
+    allow_network: bool = False
+    env: Dict[str, str] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    image: Optional[str] = None
+    cpu_limit: float = Field(1.0, ge=0.1, le=8.0)
+    mem_limit_mb: int = Field(1024, ge=128, le=32768)
+    pids_limit: int = Field(256, ge=16, le=4096)
+
+
+class CodeRunResponse(BaseModel):
+    sandbox_id: str
+    language: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    duration_ms: int
+    timed_out: bool = False
+    truncated: bool = False
+    console: List[str] = Field(default_factory=list)
+    artifacts: List[ArtifactRecord] = Field(default_factory=list)
+
+
+class WorkspaceUploadRequest(BaseModel):
+    zip_base64: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceUploadResponse(BaseModel):
+    upload_id: str
+    size: int
+    excluded: List[str] = Field(default_factory=list)
 
 
 class EnvironmentCreateRequest(BaseModel):
