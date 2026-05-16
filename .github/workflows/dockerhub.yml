@@ -426,10 +426,15 @@ jobs:
           STDOUT=$(echo "$OUT"   | python3 -c "import sys,json; print(json.load(sys.stdin).get('stdout','').strip())")
           STDERR=$(echo "$OUT"   | python3 -c "import sys,json; print(json.load(sys.stdin).get('stderr','').strip())")
 
-          if [ "$EXIT_CODE" != "0" ] || [ "$STDOUT" != "4" ]; then
+          # The runner prepends a "== Matrix Lab step: command ==" header
+          # line before each step's actual stdout, so a strict equality
+          # check would fail even when the snippet executed correctly.
+          # Match the expected program output as a line inside stdout.
+          if [ "$EXIT_CODE" != "0" ] || ! echo "$STDOUT" | grep -qx '4'; then
             echo "FAIL: /code/run did not execute correctly"
-            echo "      exit_code=$EXIT_CODE stdout=$STDOUT"
+            echo "      exit_code=$EXIT_CODE"
+            echo "      stdout=$STDOUT"
             echo "      stderr=$STDERR"
             exit 1
           fi
-          echo "OK: /code/run smoke test passed (exit_code=0, stdout=4)"
+          echo "OK: /code/run smoke test passed (exit_code=0, stdout contains '4')"

@@ -6,7 +6,7 @@ colorTo: indigo
 sdk: docker
 app_port: 7860
 license: apache-2.0
-short_description: Web console for MatrixLab Runner — dashboards, runs, sandboxes, admin
+short_description: Enterprise web console for the MatrixLab Runner
 pinned: false
 ---
 
