@@ -39,7 +39,12 @@ COPY app /app/app
 ENV PYTHONUNBUFFERED=1 \
     DOCKER_HOST=unix:///var/run/docker.sock \
     # default behavior; can override in compose/env
-    MATRIXLAB_DOCKER_PULL=missing
+    MATRIXLAB_DOCKER_PULL=missing \
+    # Prefix bare sandbox image names (matrix-lab-sandbox-*) with this
+    # namespace so the published runner can pull its sandboxes from
+    # Docker Hub.  Override (or set to empty) when running locally
+    # against bare `make build-images` outputs.
+    MATRIXLAB_IMAGE_NAMESPACE=ruslanmv
 
 EXPOSE 8000
 

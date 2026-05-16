@@ -308,13 +308,25 @@ def _image_exists(image: str) -> bool:
     return out.exit_code == 0
 
 
+def _ns(image: str) -> str:
+    """Prepend ``MATRIXLAB_IMAGE_NAMESPACE`` to a bare image name.
+
+    Mirrors the namespace logic in :mod:`runner.app.native` so preflight
+    checks pick up the same env-var-driven prefix as actual sandbox spawns.
+    Empty namespace (the default) returns ``image`` unchanged so
+    locally-built bare images keep working.
+    """
+    ns = os.environ.get("MATRIXLAB_IMAGE_NAMESPACE", "").strip().rstrip("/")
+    return f"{ns}/{image}" if ns else image
+
+
 def sandbox_selftest() -> dict:
     images = {
-        "utils": ("matrix-lab-sandbox-utils:latest", "sh -lc 'command -v find && command -v rg && command -v unzip && echo OK'"),
-        "python": ("matrix-lab-sandbox-python:latest", "sh -lc 'python -V && pip -V && echo OK'"),
-        "node": ("matrix-lab-sandbox-node:latest", "sh -lc 'node -v && npm -v && echo OK'"),
-        "go": ("matrix-lab-sandbox-go:latest", "sh -lc 'go version && echo OK'"),
-        "rust": ("matrix-lab-sandbox-rust:latest", "sh -lc 'rustc -V && cargo -V && echo OK'"),
+        "utils": (_ns("matrix-lab-sandbox-utils:latest"), "sh -lc 'command -v find && command -v rg && command -v unzip && echo OK'"),
+        "python": (_ns("matrix-lab-sandbox-python:latest"), "sh -lc 'python -V && pip -V && echo OK'"),
+        "node": (_ns("matrix-lab-sandbox-node:latest"), "sh -lc 'node -v && npm -v && echo OK'"),
+        "go": (_ns("matrix-lab-sandbox-go:latest"), "sh -lc 'go version && echo OK'"),
+        "rust": (_ns("matrix-lab-sandbox-rust:latest"), "sh -lc 'rustc -V && cargo -V && echo OK'"),
     }
 
     results = {"status": "ok", "sandboxes": {}}

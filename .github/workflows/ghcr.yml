@@ -8,6 +8,19 @@ on:
       version:
         description: "Release tag (e.g., v1.2.3 or 1.2.3)"
         required: true
+  push:
+    branches: [master, main]
+    paths:
+      - "runner/**"
+      - "sandbox-build/**"
+      - "sandbox-dotnet/**"
+      - "sandbox-go/**"
+      - "sandbox-java/**"
+      - "sandbox-node/**"
+      - "sandbox-python/**"
+      - "sandbox-rust/**"
+      - "sandbox-utils/**"
+      - ".github/workflows/ghcr.yml"
 
 permissions:
   contents: read
@@ -30,11 +43,24 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            RAW="${GITHUB_REF#refs/tags/}"
-          else
-            RAW="${{ github.event.inputs.version }}"
-          fi
+          case "${{ github.event_name }}" in
+            release)
+              RAW="${GITHUB_REF#refs/tags/}"
+              ;;
+            workflow_dispatch)
+              RAW="${{ github.event.inputs.version }}"
+              ;;
+            push)
+              # On every commit to master/main, ship a snapshot tagged
+              # 0.0.0-<branch>-<sha>. Real releases / dispatches still
+              # use a proper semver and move :latest.
+              BRANCH="${GITHUB_REF#refs/heads/}"
+              RAW="0.0.0-${BRANCH}-${GITHUB_SHA::7}"
+              ;;
+            *)
+              RAW=""
+              ;;
+          esac
           if [ -z "$RAW" ]; then
             echo "Version not provided."; exit 1
           fi
@@ -45,6 +71,9 @@ jobs:
             RELEASE_TAG="v$RAW"
             SEMVER="$RAW"
           fi
+          # Branch name (for push-only branch tag). Empty for non-push.
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
           echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
           echo "SEMVER=$SEMVER" >> $GITHUB_ENV
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
@@ -82,12 +111,14 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=v${{ env.SEMVER }}
-            type=semver,pattern={{version}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}},value=${{ env.SEMVER }}
-            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=v${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{version}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=${{ env.BRANCH }},enable=${{ github.event_name == 'push' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'push' && (env.BRANCH == 'master' || env.BRANCH == 'main') }}
           labels: |
             org.opencontainers.image.title=matrixlab-runner
             org.opencontainers.image.description=MatrixLab Runner — HTTP service that dispatches code into per-language sandbox containers
@@ -104,7 +135,7 @@ jobs:
           context: ./runner
           file: ./runner/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=ghcr-runner
@@ -165,11 +196,24 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            RAW="${GITHUB_REF#refs/tags/}"
-          else
-            RAW="${{ github.event.inputs.version }}"
-          fi
+          case "${{ github.event_name }}" in
+            release)
+              RAW="${GITHUB_REF#refs/tags/}"
+              ;;
+            workflow_dispatch)
+              RAW="${{ github.event.inputs.version }}"
+              ;;
+            push)
+              # On every commit to master/main, ship a snapshot tagged
+              # 0.0.0-<branch>-<sha>. Real releases / dispatches still
+              # use a proper semver and move :latest.
+              BRANCH="${GITHUB_REF#refs/heads/}"
+              RAW="0.0.0-${BRANCH}-${GITHUB_SHA::7}"
+              ;;
+            *)
+              RAW=""
+              ;;
+          esac
           if [ -z "$RAW" ]; then
             echo "Version not provided."; exit 1
           fi
@@ -180,6 +224,9 @@ jobs:
             RELEASE_TAG="v$RAW"
             SEMVER="$RAW"
           fi
+          # Branch name (for push-only branch tag). Empty for non-push.
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
           echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
           echo "SEMVER=$SEMVER" >> $GITHUB_ENV
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
@@ -215,12 +262,14 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=v${{ env.SEMVER }}
-            type=semver,pattern={{version}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}},value=${{ env.SEMVER }}
-            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=v${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{version}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=${{ env.BRANCH }},enable=${{ github.event_name == 'push' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'push' && (env.BRANCH == 'master' || env.BRANCH == 'main') }}
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.description=${{ matrix.description }}
@@ -235,7 +284,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=ghcr-${{ matrix.image }}
