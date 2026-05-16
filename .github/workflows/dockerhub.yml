@@ -155,10 +155,12 @@ jobs:
       # /var/run/docker.sock is mounted because runner_preflight() in
       # app/sandbox.py refuses to start without it — the runner needs
       # the host docker socket to spawn per-language sandbox containers.
+      # Use the sha-prefixed tag (always present on every event type)
+      # rather than v${SEMVER} (which only exists on release / dispatch).
       - name: Smoke test — runner /health
         shell: bash
         run: |
-          REF="${IMAGE}:v${SEMVER}"
+          REF="${IMAGE}:sha-${SHORT_SHA}"
           docker run -d --name matrixlab-runner-smoke \
             -p 8000:8000 \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -178,12 +180,18 @@ jobs:
           docker rm matrixlab-runner-smoke
           exit 1
 
-      - name: Inspect multi-arch manifest (release tag)
+      - name: Inspect manifest
         if: always()
         shell: bash
         run: |
-          echo "Inspecting v${SEMVER}…"
-          docker buildx imagetools inspect "${IMAGE}:v${SEMVER}" || true
+          # sha-prefixed tag is present on every event type (push,
+          # release, workflow_dispatch) so it's the safe lookup.
+          echo "Inspecting sha-${SHORT_SHA}…"
+          docker buildx imagetools inspect "${IMAGE}:sha-${SHORT_SHA}" || true
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "Inspecting v${SEMVER}…"
+            docker buildx imagetools inspect "${IMAGE}:v${SEMVER}" || true
+          fi
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "Inspecting latest…"
             docker buildx imagetools inspect "${IMAGE}:latest" || true
@@ -328,12 +336,18 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
 
-      - name: Inspect multi-arch manifest (release tag)
+      - name: Inspect manifest
         if: always()
         shell: bash
         run: |
-          echo "Inspecting v${SEMVER}…"
-          docker buildx imagetools inspect "${IMAGE}:v${SEMVER}" || true
+          # sha-prefixed tag is present on every event type (push,
+          # release, workflow_dispatch) so it's the safe lookup.
+          echo "Inspecting sha-${SHORT_SHA}…"
+          docker buildx imagetools inspect "${IMAGE}:sha-${SHORT_SHA}" || true
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "Inspecting v${SEMVER}…"
+            docker buildx imagetools inspect "${IMAGE}:v${SEMVER}" || true
+          fi
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "Inspecting latest…"
             docker buildx imagetools inspect "${IMAGE}:latest" || true
