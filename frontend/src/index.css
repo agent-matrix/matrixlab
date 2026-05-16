@@ -10,13 +10,6 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  background: #f8fafc;
-}
-
 .scrollbar-thin::-webkit-scrollbar {
   width: 8px;
   height: 8px;
