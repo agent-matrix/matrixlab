@@ -119,8 +119,11 @@ Recommended production launch:
 mkdir -p /var/lib/matrixlab/jobs
 chmod 755 /var/lib/matrixlab/jobs
 
+# Host port 8765 (the matrixlab default) avoids colliding with
+# GitPilot's :8000.  The runner still binds 8000 inside the
+# container; only the host mapping shifts.
 docker run -d --name matrixlab --restart unless-stopped \
-  -p 8000:8000 \
+  -p 8765:8000 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/lib/matrixlab/jobs:/var/lib/matrixlab/jobs \
   -e MATRIXLAB_LOCAL_JOBS_DIR=/var/lib/matrixlab/jobs \
@@ -128,7 +131,7 @@ docker run -d --name matrixlab --restart unless-stopped \
   -e MATRIXLAB_BEARER_TOKEN="$(openssl rand -hex 32)" \
   ruslanmv/matrixlab-runner:latest
 
-curl -fsS http://localhost:8000/health
+curl -fsS http://localhost:8765/health
 ```
 
 Per-language sandbox images are pulled lazily on first use. Pre-pulling them at startup reduces first-request latency:
@@ -214,29 +217,65 @@ A second installation mode under *Advanced → Local clone install* clones this 
 
 ## Quickstart
 
-### 1) Install
+MatrixLab ships through three distribution channels. Pick the one that matches
+how you plan to use the project.
+
+### Option A — Install the Python SDK + CLI (`pip`)
+
+The lightest path. Lets you talk to any reachable MatrixLab Runner from
+Python or the shell, no Docker required on the client side.
+
+> **Note** — the PyPI distribution name is **`matrix-lab`** (hyphenated). The
+> Python import name remains `matrixlab`, so existing `from matrixlab import …`
+> code keeps working unchanged.
 
 ```bash
-pip install matrixlab
+pip install matrix-lab                 # SDK + CLI + MCP server
+pip install 'matrix-lab[runner]'       # + FastAPI/uvicorn to host the runner natively
+pip install 'matrix-lab[all]'          # everything
 ```
 
-### 2) Start local runtime
+After install, verify and run a one-liner against a reachable Runner:
 
 ```bash
-make run
-curl http://localhost:8000/health
+matrixlab-sandbox version
+matrixlab-sandbox doctor --runner-url http://localhost:8765
+matrixlab-sandbox exec python "print(2 + 2)"
 ```
 
-### 3) Run MCP server
+### Option B — Pull the Runner from Docker Hub
+
+The default path for operators who want isolated execution on a single host.
+See [Deploying from Docker Hub](#deploying-from-docker-hub) for the full
+recipe; the short form is:
 
 ```bash
-make mcp
+mkdir -p /var/lib/matrixlab/jobs
+docker run -d --name matrixlab --restart unless-stopped \
+  -p 8765:8000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/matrixlab/jobs:/var/lib/matrixlab/jobs \
+  -e MATRIXLAB_LOCAL_JOBS_DIR=/var/lib/matrixlab/jobs \
+  -e MATRIXLAB_HOST_JOBS_DIR=/var/lib/matrixlab/jobs \
+  ruslanmv/matrixlab-runner:latest
+
+curl -fsS http://localhost:8765/health
 ```
 
-### 4) Validate MCP server
+### Option C — Run from source (contributors)
 
 ```bash
-make inspect
+git clone https://github.com/agent-matrix/matrixlab && cd matrixlab
+make install            # Python venv + frontend node_modules + MCP env
+make run                # builds and starts runner + sandboxes via docker-compose
+curl http://localhost:8765/health
+```
+
+### MCP server (any install path)
+
+```bash
+make mcp                # run the MCP stdio server
+make inspect            # initialize/tools smoke check
 ```
 
 ---
@@ -284,31 +323,66 @@ DELETE /env/{env_id}
 
 ---
 
-## Interactive local sandbox CLI
+## Command-line usage
 
-For local development, GitPilot adapters, MCP tools, and A2A agents can use the same native Runner contract through `matrixlab-sandbox`. The CLI packages a workspace as a ZIP, applies safe default excludes (`.git`, `node_modules`, virtualenvs, caches, `.env`, private keys), sends it to `POST /run`, and prints the sandbox result.
+`matrixlab-sandbox` is the operator CLI shipped with the `matrix-lab` PyPI
+package. It speaks the runner's HTTP contract, so the same commands work
+against a local Docker container, a remote runner, or a Hugging Face Space
+— point `--runner-url` (or `$MATRIXLAB_RUNNER_URL`) at the right host.
 
-Start the Runner first:
+Most usage falls into three patterns: **execute a snippet** (`exec`),
+**run a command against a workspace** (`run`), or **explore interactively**
+(`repl`).
 
-```bash
-make run
-```
+### `exec` — execute a code snippet (the everyday path)
 
-Run a generated Python hello-world program in the sandbox:
-
-```bash
-make sandbox-hello
-# or
-matrixlab-sandbox hello-python --runner-url http://localhost:8000
-```
-
-Run a command against the current workspace without host execution:
+Lightest, fastest entry point. Maps directly to `POST /code/run`. No
+workspace packaging — just ship a string of source.
 
 ```bash
-matrixlab-sandbox run --cmd "python hello.py" --workspace . --image python
+# One-liner
+matrixlab-sandbox exec python "print(2 + 2)"
+
+# Local script
+matrixlab-sandbox exec python --file demo.py
+
+# Heredoc / pipeline (great for shell scripts and CI)
+matrixlab-sandbox exec python --stdin <<EOF
+import sys
+print('python', sys.version_info[:2])
+EOF
+
+# Install a package at run time, then execute (needs network egress)
+matrixlab-sandbox exec python --network --packages "requests<3" \
+    "import requests; print(requests.get('https://httpbin.org/status/200').status_code)"
+
+# Other languages
+matrixlab-sandbox exec js   "console.log(new Date().toISOString())"
+matrixlab-sandbox exec bash "echo 'hello from \$(uname -s)' && date"
+
+# Machine-readable output (for chaining in scripts)
+matrixlab-sandbox exec python "print(2+2)" --json
 ```
 
-Open a small interactive loop:
+### `run` — execute against a packaged workspace
+
+Use when the runner needs your local files (running a test suite,
+building a project, executing a multi-file script). Packages the
+workspace as a zip with safe excludes (`.git`, `node_modules`,
+virtualenvs, `.env`, private keys) before shipping.
+
+```bash
+# Run pytest against the current directory
+matrixlab-sandbox run --workspace . --image python --cmd "pytest -q"
+
+# Run a build / test command in a specific subtree
+matrixlab-sandbox run --workspace ./service --image node --cmd "npm test"
+
+# Inspect what will be uploaded, without executing
+matrixlab-sandbox run --workspace . --image python --cmd "pytest" --dry-run --json
+```
+
+### `repl` — interactive command loop
 
 ```bash
 matrixlab-sandbox repl --workspace . --image python
@@ -317,13 +391,47 @@ matrixlab> run python hello.py
 matrixlab> exit
 ```
 
-Best-practice defaults:
+### Diagnostics and metadata
 
-- Keep the Runner URL explicit for tools/agents via `RUNNER_URL` or `MATRIXLAB_RUNNER_URL`.
-- Keep network off unless dependency installation or remote access is required (`--network`).
-- Use `--dry-run --json` to inspect packaging metadata before execution.
+```bash
+matrixlab-sandbox doctor        # is the runner reachable and healthy?
+matrixlab-sandbox langs         # which languages does this runner advertise?
+matrixlab-sandbox version       # what wheel version is installed?
+matrixlab-sandbox hello-python  # generated hello.py, full smoke test
+```
+
+### Host the runner natively
+
+When `pip install 'matrix-lab[runner]'` is installed, the `matrixlab-runner`
+binary lets you run the FastAPI service in-process — no Docker required for
+the runner itself. The runner still spawns per-language sandbox containers
+through the host Docker daemon, so `docker` must be on PATH for code
+execution.
+
+```bash
+matrixlab-runner serve --port 8765
+matrixlab-runner serve --host 0.0.0.0 --port 8765 --workers 2
+matrixlab-runner version
+```
+
+### Environment
+
+| Variable | Purpose |
+|---|---|
+| `MATRIXLAB_RUNNER_URL` | Default Runner URL for `matrixlab-sandbox` and `matrixlab` SDK calls |
+| `RUNNER_URL` | Backwards-compatible alias for the above |
+| `MATRIXLAB_BEARER_TOKEN` | Sent as `Authorization: Bearer <token>` when the runner has auth enabled |
+| `MATRIXLAB_APP` | Override the ASGI app `matrixlab-runner serve` hosts (advanced) |
+
+### Best-practice defaults
+
+- Keep `--network` off unless the snippet truly needs egress; the runner
+  defaults to a sealed sandbox.
+- Use `--dry-run --json` on `run` to inspect packaging metadata before
+  uploading anything.
 - Put additional local packaging exclusions in `.gitpilotignore`.
-- Set `MATRIXLAB_BEARER_TOKEN` when the Runner requires bearer authentication.
+- Set `MATRIXLAB_BEARER_TOKEN` whenever the runner is reachable from
+  outside `localhost`.
 
 ---
 

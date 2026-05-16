@@ -17,5 +17,15 @@ frontend/.matrixlab-frontend.log
 .matrixlab-frontend.log
 # Python build metadata regenerated on every `pip install -e .`.
 matrixlab.egg-info/
+# uv lockfile — matrixlab uses setuptools, not uv, as its primary
+# package manager.  uv.lock can appear as a side effect of
+# contributors running ``uv run`` for ad-hoc builds; ignore it so
+# only ``pyproject.toml`` is the source of truth for deps.
+uv.lock
+# Build outputs from ``python -m build``.
+/dist/
+/build/
+*.whl
+*.tar.gz
 /runner_envs
 /runner_state

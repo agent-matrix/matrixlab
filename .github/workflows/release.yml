@@ -1,0 +1,257 @@
+name: 📦 Build & Publish to PyPI
+
+# Trigger on either a published GitHub Release (canonical path) or a
+# manual ``workflow_dispatch`` for emergency / re-publish scenarios.
+# Manual runs can also be routed to TestPyPI first so a bad wheel
+# never reaches production by accident.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.1.0 or v0.1.0). Required for manual runs."
+        required: true
+        default: ""
+      target:
+        description: "Where to publish."
+        required: true
+        type: choice
+        default: "pypi"
+        options:
+          - pypi
+          - testpypi
+
+permissions:
+  contents: write   # upload wheel + sdist as release assets
+  id-token: write   # OIDC for PyPI Trusted Publishing — no API tokens
+                    # to rotate, no secrets to leak.
+
+concurrency:
+  group: pypi-publish-${{ github.ref }}
+  cancel-in-progress: false  # never cancel a publish mid-flight
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────
+  # 1) Build — version-patch, build, sanity-check, attach to release
+  # ───────────────────────────────────────────────────────────────────
+  build:
+    name: 🔧 Build distributions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      target:  ${{ steps.target.outputs.target  }}
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # uv-built tools that read git tags need this
+
+      - name: 📝 Derive version from tag or input
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+          else
+            RAW="${{ github.event.inputs.version }}"
+          fi
+          if [ -z "$RAW" ]; then
+            echo "::error::No version provided. Manual runs must set 'version'."
+            exit 1
+          fi
+          # Accept both ``v0.1.0`` and ``0.1.0`` — strip the leading v.
+          SEMVER="${RAW#v}"
+          # Defensive: reject anything that isn't PEP 440-ish.  Catches
+          # operator typos like 'release-0.1.0' before they reach PyPI
+          # (where bad version names linger forever).
+          if ! echo "$SEMVER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([abrc]?[0-9]+|\.dev[0-9]+|\.post[0-9]+|-?rc[0-9]+)?$'; then
+            echo "::error::Version '$SEMVER' is not PEP 440 compliant."
+            exit 1
+          fi
+          echo "VERSION=$SEMVER" >> "$GITHUB_ENV"
+          echo "version=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "📦 Building matrix-lab==$SEMVER"
+
+      - name: 🎯 Decide target registry
+        id: target
+        shell: bash
+        run: |
+          # Releases always go to PyPI.  Manual dispatch can opt into
+          # TestPyPI first for verification.
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TARGET="pypi"
+          else
+            TARGET="${{ github.event.inputs.target }}"
+          fi
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "🎯 Target: $TARGET"
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 🔁 Patch pyproject.toml version
+        shell: bash
+        run: |
+          # Single line, single field — keep the patch surgical so a
+          # broken pyproject can't slip through.
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          echo "✅ pyproject.toml → $VERSION"
+          grep '^version' pyproject.toml
+
+      - name: 📦 Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: 🏗️ Build sdist and wheel
+        run: |
+          rm -rf dist build *.egg-info
+          python -m build
+          ls -lh dist/
+
+      - name: 🔍 Validate distributions
+        run: |
+          # `twine check` catches missing README, bad metadata, broken
+          # long-description rendering — exactly the kind of error you
+          # want to find BEFORE PyPI rejects (or worse, accepts) the
+          # upload.
+          python -m twine check --strict dist/*
+
+      - name: 🧪 Verify wheel installs cleanly in a fresh env
+        run: |
+          # Clean install in a throwaway venv.  Catches missing
+          # ``dependencies`` entries that ``twine check`` doesn't.
+          python -m venv /tmp/verify
+          /tmp/verify/bin/pip install --upgrade pip
+          /tmp/verify/bin/pip install dist/*.whl
+          /tmp/verify/bin/python -c "import matrixlab; print('import matrixlab → OK,', matrixlab.__file__)"
+          # Console scripts must resolve too — they're the SDK's public surface.
+          /tmp/verify/bin/matrixlab-sandbox --help > /dev/null
+
+      - name: 📤 Attach distributions to the GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: 💾 Persist artifacts for the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dists
+          path: dist/
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────
+  # 2) Publish to TestPyPI (manual dispatch only when target=testpypi)
+  # ───────────────────────────────────────────────────────────────────
+  publish-testpypi:
+    name: 🚧 Publish to TestPyPI
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.target == 'testpypi'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/matrix-lab/
+    steps:
+      - name: 📥 Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dists
+          path: dist/
+
+      - name: 🚧 Publish via Trusted Publishing → TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # ``skip-existing: true`` makes re-publishing the same
+          # version safe — useful when a build job got re-run for a
+          # transient reason.
+          skip-existing: true
+
+      - name: ✅ Smoke-test the TestPyPI release
+        shell: bash
+        run: |
+          # Wait for the index to converge then try to install.  Three
+          # short retries beat the rare TestPyPI 404 race that follows
+          # a fresh upload by ~10s.
+          python -m venv /tmp/smoke
+          for i in 1 2 3; do
+            sleep 10
+            /tmp/smoke/bin/pip install --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "matrix-lab==${{ needs.build.outputs.version }}" && break
+          done
+          /tmp/smoke/bin/python -c "import matrixlab; print('TestPyPI install OK:', matrixlab.__file__)"
+
+  # ───────────────────────────────────────────────────────────────────
+  # 3) Publish to PyPI (canonical path — release events)
+  # ───────────────────────────────────────────────────────────────────
+  publish-pypi:
+    name: 🚀 Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.target == 'pypi'
+    environment:
+      name: pypi
+      url: https://pypi.org/project/matrix-lab/
+    steps:
+      - name: 📥 Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dists
+          path: dist/
+
+      - name: 🚀 Publish via Trusted Publishing → PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No ``with:`` block — OIDC alone resolves the registry, the
+        # project, the environment, and the API endpoint.  No secrets.
+
+      - name: ✅ Smoke-test the PyPI release
+        shell: bash
+        run: |
+          python -m venv /tmp/smoke
+          for i in 1 2 3 4 5; do
+            sleep 15
+            /tmp/smoke/bin/pip install "matrix-lab==${{ needs.build.outputs.version }}" && break
+          done
+          /tmp/smoke/bin/python -c "import matrixlab; print('PyPI install OK:', matrixlab.__file__)"
+
+  # ───────────────────────────────────────────────────────────────────
+  # 4) Summary — shows up in the Actions tab as a nice recap
+  # ───────────────────────────────────────────────────────────────────
+  summary:
+    name: 📊 Release summary
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: always()
+    steps:
+      - name: 📊 Print summary
+        shell: bash
+        run: |
+          {
+            echo "## 🐍 matrix-lab ${{ needs.build.outputs.version }}"
+            echo
+            echo "**Target:** \`${{ needs.build.outputs.target }}\`"
+            echo "**Triggered by:** \`${{ github.event_name }}\`"
+            echo
+            echo "### Install"
+            echo '```bash'
+            if [ "${{ needs.build.outputs.target }}" = "testpypi" ]; then
+              echo "pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ matrix-lab==${{ needs.build.outputs.version }}"
+            else
+              echo "pip install matrix-lab==${{ needs.build.outputs.version }}"
+            fi
+            echo '```'
+            echo
+            echo "### Optional extras"
+            echo '- `pip install matrix-lab[runner]` — adds FastAPI + uvicorn to run the runner natively'
+            echo '- `pip install matrix-lab[cli]` — adds Click + Rich for the sandbox CLI'
+            echo '- `pip install matrix-lab[all]` — everything'
+          } >> "$GITHUB_STEP_SUMMARY"

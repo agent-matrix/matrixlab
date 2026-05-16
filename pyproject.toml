@@ -3,9 +3,14 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "matrixlab"
+# PyPI distribution name. ``matrixlab`` (no hyphen) is squatted by an
+# unrelated v0.0.1 placeholder; the hyphenated form is canonically
+# distinct under PEP 503 and what end users ``pip install``. The
+# Python import name stays ``matrixlab`` (see ``[tool.setuptools]``
+# below), so no source consumer needs to update an import statement.
+name = "matrix-lab"
 version = "0.1.0"
-description = "Safety-first sandbox verification facility for Agent-Matrix (MCP stdio server + inspector)."
+description = "Safety-first sandbox execution for agents, CI, and MCP tools — Python SDK and optional embedded runner."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -39,19 +44,58 @@ classifiers = [
   "Topic :: Utilities"
 ]
 
+# Core dependencies — everything the four ``[project.scripts]`` need
+# to import cleanly after a bare ``pip install matrix-lab``.  Keeping
+# the heavier HTTP server stack (FastAPI/uvicorn) behind the
+# ``[runner]`` extra preserves the "SDK first" install profile.
 dependencies = [
-  "mcp==1.2.0",
+  "httpx>=0.26.0",
   "requests>=2.32.3,<3",
-  "fastapi>=0.109.0",
-  "uvicorn[standard]>=0.27.0",
-  "httpx>=0.26.0"
+  "pydantic>=2,<3",
+  "typing-extensions>=4.5",
+  "mcp==1.2.0",
 ]
 
 [project.optional-dependencies]
+# The embedded FastAPI runner — adds the dependencies needed by
+# ``runner/app/main.py`` so ``matrixlab-runner serve`` works natively
+# without Docker.  Skipped by default because most operators use the
+# Docker image (``ruslanmv/matrixlab-runner``) instead.
+runner = [
+  "fastapi>=0.109.0",
+  "uvicorn[standard]>=0.27.0",
+  "python-multipart>=0.0.9",
+]
+
+# The interactive CLI — friendlier output for ``matrixlab-sandbox``.
+# The script itself still works with core deps; this extra just
+# upgrades the UX with colours and progress bars.
+cli = [
+  "click>=8",
+  "rich>=13",
+]
+
+# Hugging Face Space wrapper.  The Space image / sync workflow pulls
+# the wheel and runs ``uvicorn hf.app.main:app`` — needs the runner
+# deps plus Jinja2 templates for the inspector UI.
+hf = [
+  "fastapi>=0.109.0",
+  "uvicorn[standard]>=0.27.0",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.9",
+]
+
+# Convenience meta-extra that pulls everything an end-user touches.
+all = [
+  "matrix-lab[runner,cli,hf]",
+]
+
+# Contributor tooling — never required to use the package.
 dev = [
   "build>=1.2.2",
   "twine>=5.1.1",
-  "ruff>=0.6.0"
+  "ruff>=0.6.0",
+  "pytest>=8",
 ]
 
 [project.urls]
@@ -64,6 +108,10 @@ matrixlab-mcp = "matrixlab.mcp_server:cli"
 matrixlab-inspect = "matrixlab.mcp_inspector:cli"
 matrixlab-start = "tools.bootstrap:main"
 matrixlab-sandbox = "matrixlab.sandbox_cli:main"
+# Native runner entry point.  Refuses to start unless ``matrix-lab[runner]``
+# extras are installed, so a bare ``pip install matrix-lab`` doesn't
+# produce a binary that crashes on import.
+matrixlab-runner = "matrixlab.runner_entry:main"
 
 [tool.setuptools]
 include-package-data = false
