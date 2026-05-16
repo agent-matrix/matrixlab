@@ -5,7 +5,10 @@ services:
     image: matrix-lab-runner:latest
     user: "0:0"
     ports:
-      - "8000:8000"
+      # Avoid GitPilot's :8000 (its FastAPI backend) — MatrixLab is an
+      # addon, so it yields. Override with MATRIXLAB_RUNNER_PORT to use
+      # something else; the runner still binds 8000 inside the container.
+      - "${MATRIXLAB_RUNNER_PORT:-8765}:8000"
     volumes:
       # 1. Mount docker socket
       - /var/run/docker.sock:/var/run/docker.sock

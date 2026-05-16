@@ -15,6 +15,28 @@
 
 ---
 
+## Enterprise Console
+
+The MatrixLab Enterprise Console is the operator UI included in this
+repository under `frontend/`. It surfaces live runner state — uptime,
+throughput, P95 latency, error rate, connected applications, per-route
+call rate — plus the interactive Sandbox Playground (`POST /code/run`),
+Run history, Profiles, Environments, Integrations, Security policies,
+and the Admin tabs (Runtime Health / Warm Pools / Images / Settings).
+
+<p align="center">
+  <img src="assets/screenshots/service-monitor.png"
+       alt="MatrixLab Enterprise Console — Service Monitor"
+       width="100%" />
+</p>
+
+The console is a standalone React/Vite app. It can run alongside the
+runner on the operator's machine (`make run`) or be published as a
+standalone Hugging Face Space (see [`hf-console/`](hf-console/)) that
+any browser can point at any reachable MatrixLab Runner.
+
+---
+
 ## Why MatrixLab
 
 MatrixLab provides a production execution fabric for untrusted code and autonomous maintenance loops:

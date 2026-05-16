@@ -12,6 +12,7 @@ import { Integrations } from "./integrations.jsx";
 import { ServiceMonitor } from "./service.jsx";
 import { Playground } from "./playground.jsx";
 import { Icon, seedRuns } from "./shared.jsx";
+import { probeRuntime, getSettings, saveSettings } from "./api.js";
 import {
   useTweaks, TweaksPanel, TweakSection,
   TweakRadio, TweakColor,
@@ -46,6 +47,22 @@ export default function ConsoleApp() {
   const [runs, setRuns] = useState(seedRuns);
   const [adminMode, setAdminMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Live runtime health pill — polls /health on the user-configured
+  // interval. ``runtimeOk = null`` while we haven't probed yet so the
+  // topbar can render a neutral state instead of a flashing red dot.
+  const [runtimeOk, setRuntimeOk] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const r = await probeRuntime();
+      if (!cancelled) setRuntimeOk(r.ok);
+    };
+    tick();
+    const interval = Math.max(2, Number(getSettings().pollSeconds) || 5) * 1000;
+    const h = setInterval(tick, interval);
+    return () => { cancelled = true; clearInterval(h); };
+  }, [showSettings]); // re-arm after the user saves settings
 
   // simulate "running" run progressing to passed after a few seconds for liveness
   useEffect(() => {
@@ -183,6 +200,37 @@ export default function ConsoleApp() {
 }
 
 function SettingsModal({ onClose }) {
+  const stored = getSettings();
+  const [runnerUrl, setRunnerUrl] = useState(stored.runnerUrl || "");
+  const [bearerToken, setBearerToken] = useState(stored.bearerToken || "");
+  const [pollSeconds, setPollSeconds] = useState(stored.pollSeconds || 5);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  const probe = async () => {
+    setTesting(true);
+    setTestResult(null);
+    // Save first so the api client picks up the new URL/token.
+    saveSettings({ runnerUrl: runnerUrl.trim(), bearerToken: bearerToken.trim(), pollSeconds });
+    try {
+      const r = await probeRuntime();
+      setTestResult(r.ok
+        ? { ok: true, message: `Connected${r.version ? ` · runner v${r.version}` : ""}` }
+        : { ok: false, message: r.error || "Connection failed" });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const save = () => {
+    saveSettings({
+      runnerUrl: runnerUrl.trim(),
+      bearerToken: bearerToken.trim(),
+      pollSeconds: Number(pollSeconds) || 5,
+    });
+    onClose();
+  };
+
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -193,22 +241,46 @@ function SettingsModal({ onClose }) {
         <div className="modal-body">
           <div className="field">
             <label>Runner URL</label>
-            <input className="input" defaultValue="http://localhost:8000"/>
+            <input className="input"
+              value={runnerUrl}
+              onChange={e => setRunnerUrl(e.target.value)}
+              placeholder="http://localhost:8765"/>
+            <small className="hint">
+              Leave empty to use the same origin (Vite proxy in dev, nginx in production).
+            </small>
           </div>
           <div className="field">
             <label>Bearer token</label>
-            <input className="input" type="password" defaultValue="••••••••••••••••"/>
+            <input className="input" type="password"
+              value={bearerToken}
+              onChange={e => setBearerToken(e.target.value)}
+              placeholder="(optional) — required when runner has MATRIXLAB_BEARER_TOKEN set"/>
           </div>
           <div className="field">
             <label>Polling interval</label>
             <div className="segmented">
-              {[2, 5, 10, 30].map(s => <button key={s} className={s === 5 ? "on" : ""}>{s}s</button>)}
+              {[2, 5, 10, 30].map(s => (
+                <button key={s}
+                  className={pollSeconds === s ? "on" : ""}
+                  onClick={() => setPollSeconds(s)}>
+                  {s}s
+                </button>
+              ))}
             </div>
           </div>
+          {testResult && (
+            <div className={`field-banner ${testResult.ok ? "ok" : "err"}`}>
+              {testResult.ok ? "✓ " : "✗ "}{testResult.message}
+            </div>
+          )}
         </div>
         <div className="modal-foot">
+          <button className="btn" onClick={probe} disabled={testing}>
+            {testing ? "Testing…" : "Test connection"}
+          </button>
+          <span style={{ flex: 1 }}/>
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={onClose}>Save</button>
+          <button className="btn btn-primary" onClick={save}>Save</button>
         </div>
       </div>
     </div>
