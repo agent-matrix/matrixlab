@@ -51,6 +51,18 @@ IMAGE_ALIASES = {
     "build": "matrix-lab-sandbox-build:latest",
 }
 
+# When the runner is shipped via ``docker pull``, the bare image names
+# above don't exist on Docker Hub — they're published under a namespace
+# (e.g. ``ruslanmv/matrix-lab-sandbox-python``).  Operators set
+# ``MATRIXLAB_IMAGE_NAMESPACE`` to that prefix so every alias resolves to
+# the published image; the default is empty so locally-built bare images
+# (``make build-images`` with no push) keep working unchanged.
+_IMAGE_NAMESPACE = os.environ.get("MATRIXLAB_IMAGE_NAMESPACE", "").strip().rstrip("/")
+if _IMAGE_NAMESPACE:
+    IMAGE_ALIASES = {
+        alias: f"{_IMAGE_NAMESPACE}/{ref}" for alias, ref in IMAGE_ALIASES.items()
+    }
+
 
 def ensure_state_dirs() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

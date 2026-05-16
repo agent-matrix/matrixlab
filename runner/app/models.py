@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
+
+
+def _default_python_image() -> str:
+    """Resolve the default Python sandbox image at import time.
+
+    Prepends ``MATRIXLAB_IMAGE_NAMESPACE`` so requests that omit
+    ``sandbox_image`` still target the published Docker Hub /
+    GHCR copy when the operator set the namespace env var.
+    """
+    ns = os.environ.get("MATRIXLAB_IMAGE_NAMESPACE", "").strip().rstrip("/")
+    base = "matrix-lab-sandbox-python:latest"
+    return f"{ns}/{base}" if ns else base
 
 NetworkMode = Literal["none", "egress"]
 
@@ -24,7 +37,7 @@ class RunRequest(BaseModel):
     mem_limit_mb: int = 1024
     pids_limit: int = 256
 
-    sandbox_image: str = "matrix-lab-sandbox-python:latest"
+    sandbox_image: str = Field(default_factory=_default_python_image)
 
 
 class StepResult(BaseModel):
@@ -137,7 +150,7 @@ class EnvironmentCreateRequest(BaseModel):
     environment_id: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9._-]+$")
     repo_url: str
     default_branch: str = "main"
-    sandbox_image: str = "matrix-lab-sandbox-python:latest"
+    sandbox_image: str = Field(default_factory=_default_python_image)
     setup_script: str = "echo 'No setup script configured.'"
     maintenance_script: str = "echo 'No maintenance script configured.'"
     task_command: str = "pytest -q || python -m unittest discover || python -m compileall ."

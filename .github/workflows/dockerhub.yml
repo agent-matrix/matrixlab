@@ -8,6 +8,21 @@ on:
       version:
         description: "Release tag (e.g., v1.2.3 or 1.2.3)"
         required: true
+  push:
+    branches: [master, main]
+    # Only rebuild when something that ends up in an image changes.
+    # Docs / READMEs / Makefile-only commits don't burn CI time.
+    paths:
+      - "runner/**"
+      - "sandbox-build/**"
+      - "sandbox-dotnet/**"
+      - "sandbox-go/**"
+      - "sandbox-java/**"
+      - "sandbox-node/**"
+      - "sandbox-python/**"
+      - "sandbox-rust/**"
+      - "sandbox-utils/**"
+      - ".github/workflows/dockerhub.yml"
 
 permissions:
   contents: read
@@ -30,11 +45,24 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            RAW="${GITHUB_REF#refs/tags/}"
-          else
-            RAW="${{ github.event.inputs.version }}"
-          fi
+          case "${{ github.event_name }}" in
+            release)
+              RAW="${GITHUB_REF#refs/tags/}"
+              ;;
+            workflow_dispatch)
+              RAW="${{ github.event.inputs.version }}"
+              ;;
+            push)
+              # On every commit to master/main, ship a snapshot tagged
+              # 0.0.0-<branch>-<sha>. Real releases / dispatches still
+              # use a proper semver and move :latest.
+              BRANCH="${GITHUB_REF#refs/heads/}"
+              RAW="0.0.0-${BRANCH}-${GITHUB_SHA::7}"
+              ;;
+            *)
+              RAW=""
+              ;;
+          esac
           if [ -z "$RAW" ]; then
             echo "Version not provided."; exit 1
           fi
@@ -45,6 +73,9 @@ jobs:
             RELEASE_TAG="v$RAW"
             SEMVER="$RAW"
           fi
+          # Branch name (for push-only branch tag). Empty for non-push.
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
           echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
           echo "SEMVER=$SEMVER" >> $GITHUB_ENV
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
@@ -83,15 +114,17 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            # stable semver tags (always)
-            type=raw,value=v${{ env.SEMVER }}
-            type=semver,pattern={{version}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}},value=${{ env.SEMVER }}
-            # short sha tag (always)
-            type=raw,value=sha-${{ env.SHORT_SHA }}
-            # latest only on release
+            # release / manual dispatch: clean semver tags + latest
+            type=raw,value=v${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{version}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            # always: short-sha so any build is reproducibly addressable
+            type=raw,value=sha-${{ env.SHORT_SHA }}
+            # push only: branch tag (e.g. master) + edge alias for the head of default
+            type=raw,value=${{ env.BRANCH }},enable=${{ github.event_name == 'push' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'push' && (env.BRANCH == 'master' || env.BRANCH == 'main') }}
           labels: |
             org.opencontainers.image.title=matrixlab-runner
             org.opencontainers.image.description=MatrixLab Runner — HTTP service that dispatches code into per-language sandbox containers
@@ -108,7 +141,7 @@ jobs:
           context: ./runner
           file: ./runner/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=runner
@@ -196,11 +229,24 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            RAW="${GITHUB_REF#refs/tags/}"
-          else
-            RAW="${{ github.event.inputs.version }}"
-          fi
+          case "${{ github.event_name }}" in
+            release)
+              RAW="${GITHUB_REF#refs/tags/}"
+              ;;
+            workflow_dispatch)
+              RAW="${{ github.event.inputs.version }}"
+              ;;
+            push)
+              # On every commit to master/main, ship a snapshot tagged
+              # 0.0.0-<branch>-<sha>. Real releases / dispatches still
+              # use a proper semver and move :latest.
+              BRANCH="${GITHUB_REF#refs/heads/}"
+              RAW="0.0.0-${BRANCH}-${GITHUB_SHA::7}"
+              ;;
+            *)
+              RAW=""
+              ;;
+          esac
           if [ -z "$RAW" ]; then
             echo "Version not provided."; exit 1
           fi
@@ -211,6 +257,9 @@ jobs:
             RELEASE_TAG="v$RAW"
             SEMVER="$RAW"
           fi
+          # Branch name (for push-only branch tag). Empty for non-push.
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
           echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
           echo "SEMVER=$SEMVER" >> $GITHUB_ENV
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
@@ -247,12 +296,14 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=v${{ env.SEMVER }}
-            type=semver,pattern={{version}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}},value=${{ env.SEMVER }}
-            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=v${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{version}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{major}},value=${{ env.SEMVER }},enable=${{ github.event_name != 'push' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=${{ env.BRANCH }},enable=${{ github.event_name == 'push' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'push' && (env.BRANCH == 'master' || env.BRANCH == 'main') }}
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.description=${{ matrix.description }}
@@ -267,7 +318,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
@@ -301,24 +352,21 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Derive release version
+      - name: Resolve test image tag
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            RAW="${GITHUB_REF#refs/tags/}"
-          else
-            RAW="${{ github.event.inputs.version }}"
-          fi
-          if [[ "$RAW" =~ ^v ]]; then SEMVER="${RAW#v}"; else SEMVER="$RAW"; fi
-          echo "SEMVER=$SEMVER" >> $GITHUB_ENV
+          # Every event publishes a sha-prefixed tag, so we can always
+          # pull THIS run's images regardless of event type — push,
+          # release, or workflow_dispatch.
+          echo "TEST_TAG=sha-${GITHUB_SHA::7}" >> $GITHUB_ENV
 
       - name: Pull, boot, and probe
         shell: bash
         run: |
           USER_LC="${{ secrets.DOCKERHUB_USERNAME }}"
           USER_LC="${USER_LC,,}"
-          RUNNER="docker.io/${USER_LC}/matrixlab-runner:v${SEMVER}"
-          SANDBOX_PY="docker.io/${USER_LC}/matrix-lab-sandbox-python:v${SEMVER}"
+          RUNNER="docker.io/${USER_LC}/matrixlab-runner:${TEST_TAG}"
+          SANDBOX_PY="docker.io/${USER_LC}/matrix-lab-sandbox-python:${TEST_TAG}"
 
           docker pull "$RUNNER"
           docker pull "$SANDBOX_PY"
@@ -341,8 +389,21 @@ jobs:
           docker stop matrixlab-it
           docker rm matrixlab-it
 
-          if ! echo "$OUT" | grep -q '"stdout"'; then
-            echo "FAIL: /code/run did not return stdout"
+          # The previous version of this smoke test only checked that a
+          # ``stdout`` field was returned — which was true even when the
+          # sandbox spawn failed with ``pull access denied`` (the runner
+          # still answered with a 200 + empty stdout + exit_code=125).
+          # Assert the real success contract: exit_code 0 and stdout
+          # containing the expected "4" so a broken namespace can't slip
+          # past again.
+          EXIT_CODE=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('exit_code'))")
+          STDOUT=$(echo "$OUT"   | python3 -c "import sys,json; print(json.load(sys.stdin).get('stdout','').strip())")
+          STDERR=$(echo "$OUT"   | python3 -c "import sys,json; print(json.load(sys.stdin).get('stderr','').strip())")
+
+          if [ "$EXIT_CODE" != "0" ] || [ "$STDOUT" != "4" ]; then
+            echo "FAIL: /code/run did not execute correctly"
+            echo "      exit_code=$EXIT_CODE stdout=$STDOUT"
+            echo "      stderr=$STDERR"
             exit 1
           fi
-          echo "OK: /code/run smoke test passed"
+          echo "OK: /code/run smoke test passed (exit_code=0, stdout=4)"
