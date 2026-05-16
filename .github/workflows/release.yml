@@ -72,7 +72,7 @@ jobs:
           fi
           echo "VERSION=$SEMVER" >> "$GITHUB_ENV"
           echo "version=$SEMVER" >> "$GITHUB_OUTPUT"
-          echo "📦 Building matrix-lab==$SEMVER"
+          echo "📦 Building agent-matrix-lab==$SEMVER"
 
       - name: 🎯 Decide target registry
         id: target
@@ -158,7 +158,7 @@ jobs:
     if: needs.build.outputs.target == 'testpypi'
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/matrix-lab/
+      url: https://test.pypi.org/project/agent-matrix-lab/
     steps:
       - name: 📥 Download distributions
         uses: actions/download-artifact@v4
@@ -186,7 +186,7 @@ jobs:
             sleep 10
             /tmp/smoke/bin/pip install --index-url https://test.pypi.org/simple/ \
               --extra-index-url https://pypi.org/simple/ \
-              "matrix-lab==${{ needs.build.outputs.version }}" && break
+              "agent-matrix-lab==${{ needs.build.outputs.version }}" && break
           done
           /tmp/smoke/bin/python -c "import matrixlab; print('TestPyPI install OK:', matrixlab.__file__)"
 
@@ -200,7 +200,7 @@ jobs:
     if: needs.build.outputs.target == 'pypi'
     environment:
       name: pypi
-      url: https://pypi.org/project/matrix-lab/
+      url: https://pypi.org/project/agent-matrix-lab/
     steps:
       - name: 📥 Download distributions
         uses: actions/download-artifact@v4
@@ -219,7 +219,7 @@ jobs:
           python -m venv /tmp/smoke
           for i in 1 2 3 4 5; do
             sleep 15
-            /tmp/smoke/bin/pip install "matrix-lab==${{ needs.build.outputs.version }}" && break
+            /tmp/smoke/bin/pip install "agent-matrix-lab==${{ needs.build.outputs.version }}" && break
           done
           /tmp/smoke/bin/python -c "import matrixlab; print('PyPI install OK:', matrixlab.__file__)"
 
@@ -236,7 +236,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## 🐍 matrix-lab ${{ needs.build.outputs.version }}"
+            echo "## 🐍 agent-matrix-lab ${{ needs.build.outputs.version }}"
             echo
             echo "**Target:** \`${{ needs.build.outputs.target }}\`"
             echo "**Triggered by:** \`${{ github.event_name }}\`"
@@ -244,14 +244,14 @@ jobs:
             echo "### Install"
             echo '```bash'
             if [ "${{ needs.build.outputs.target }}" = "testpypi" ]; then
-              echo "pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ matrix-lab==${{ needs.build.outputs.version }}"
+              echo "pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ agent-matrix-lab==${{ needs.build.outputs.version }}"
             else
-              echo "pip install matrix-lab==${{ needs.build.outputs.version }}"
+              echo "pip install agent-matrix-lab==${{ needs.build.outputs.version }}"
             fi
             echo '```'
             echo
             echo "### Optional extras"
-            echo '- `pip install matrix-lab[runner]` — adds FastAPI + uvicorn to run the runner natively'
-            echo '- `pip install matrix-lab[cli]` — adds Click + Rich for the sandbox CLI'
-            echo '- `pip install matrix-lab[all]` — everything'
+            echo '- `pip install agent-matrix-lab[runner]` — adds FastAPI + uvicorn to run the runner natively'
+            echo '- `pip install agent-matrix-lab[cli]` — adds Click + Rich for the sandbox CLI'
+            echo '- `pip install agent-matrix-lab[all]` — everything'
           } >> "$GITHUB_STEP_SUMMARY"

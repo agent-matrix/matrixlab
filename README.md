@@ -225,14 +225,14 @@ how you plan to use the project.
 The lightest path. Lets you talk to any reachable MatrixLab Runner from
 Python or the shell, no Docker required on the client side.
 
-> **Note** — the PyPI distribution name is **`matrix-lab`** (hyphenated). The
+> **Note** — the PyPI distribution name is **`agent-matrix-lab`** (hyphenated). The
 > Python import name remains `matrixlab`, so existing `from matrixlab import …`
 > code keeps working unchanged.
 
 ```bash
-pip install matrix-lab                 # SDK + CLI + MCP server
-pip install 'matrix-lab[runner]'       # + FastAPI/uvicorn to host the runner natively
-pip install 'matrix-lab[all]'          # everything
+pip install agent-matrix-lab                 # SDK + CLI + MCP server
+pip install 'agent-matrix-lab[runner]'       # + FastAPI/uvicorn to host the runner natively
+pip install 'agent-matrix-lab[all]'          # everything
 ```
 
 After install, verify and run a one-liner against a reachable Runner:
@@ -325,7 +325,7 @@ DELETE /env/{env_id}
 
 ## Command-line usage
 
-`matrixlab-sandbox` is the operator CLI shipped with the `matrix-lab` PyPI
+`matrixlab-sandbox` is the operator CLI shipped with the `agent-matrix-lab` PyPI
 package. It speaks the runner's HTTP contract, so the same commands work
 against a local Docker container, a remote runner, or a Hugging Face Space
 — point `--runner-url` (or `$MATRIXLAB_RUNNER_URL`) at the right host.
@@ -402,7 +402,7 @@ matrixlab-sandbox hello-python  # generated hello.py, full smoke test
 
 ### Host the runner natively
 
-When `pip install 'matrix-lab[runner]'` is installed, the `matrixlab-runner`
+When `pip install 'agent-matrix-lab[runner]'` is installed, the `matrixlab-runner`
 binary lets you run the FastAPI service in-process — no Docker required for
 the runner itself. The runner still spawns per-language sandbox containers
 through the host Docker daemon, so `docker` must be on PATH for code

@@ -256,9 +256,9 @@ def version_cmd(args: argparse.Namespace) -> int:
     """``matrixlab-sandbox version`` — print the installed wheel version."""
     try:
         from importlib.metadata import version, PackageNotFoundError
-        print(f"matrix-lab {version('matrix-lab')}")
+        print(f"agent-matrix-lab {version('agent-matrix-lab')}")
     except Exception:
-        print("matrix-lab (development build)")
+        print("agent-matrix-lab (development build)")
     return 0
 
 
@@ -503,7 +503,7 @@ def build_parser() -> argparse.ArgumentParser:
     langs_p.set_defaults(func=langs)
 
     # --- version : show installed wheel version ----------------------
-    version_p = sub.add_parser("version", help="Print the matrix-lab version.")
+    version_p = sub.add_parser("version", help="Print the agent-matrix-lab version.")
     version_p.set_defaults(func=version_cmd)
 
     # --- run : workspace-packaging executor --------------------------
