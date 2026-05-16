@@ -385,9 +385,21 @@ jobs:
           docker pull "$RUNNER"
           docker pull "$SANDBOX_PY"
 
+          # Docker-in-Docker bind-mount fix. The runner writes the
+          # job workspace at $MATRIXLAB_LOCAL_JOBS_DIR (inside its own
+          # container) and asks the HOST daemon to mount that path into
+          # the sandbox at /workspace. If the path isn't also visible on
+          # the host filesystem the bind ends up empty and /workspace/main.py
+          # disappears. We share a single host directory at the same path
+          # on both sides so docker's path-translation is a no-op.
+          mkdir -p /tmp/matrixlab-jobs
+          chmod 777 /tmp/matrixlab-jobs
           docker run -d --name matrixlab-it \
             -p 8000:8000 \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp/matrixlab-jobs:/tmp/matrixlab-jobs \
+            -e MATRIXLAB_LOCAL_JOBS_DIR=/tmp/matrixlab-jobs \
+            -e MATRIXLAB_HOST_JOBS_DIR=/tmp/matrixlab-jobs \
             "$RUNNER"
 
           for i in $(seq 1 30); do
