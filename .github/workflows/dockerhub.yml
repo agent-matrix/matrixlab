@@ -118,12 +118,18 @@ jobs:
             BUILD_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ env.BUILD_DATE }}
 
-      # Sanity guard: the runner must boot and answer /health
+      # Sanity guard: the runner must boot and answer /health.
+      # /var/run/docker.sock is mounted because runner_preflight() in
+      # app/sandbox.py refuses to start without it — the runner needs
+      # the host docker socket to spawn per-language sandbox containers.
       - name: Smoke test — runner /health
         shell: bash
         run: |
           REF="${IMAGE}:v${SEMVER}"
-          docker run -d --name matrixlab-runner-smoke -p 8000:8000 "$REF"
+          docker run -d --name matrixlab-runner-smoke \
+            -p 8000:8000 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$REF"
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
               echo "OK: /health responded"
