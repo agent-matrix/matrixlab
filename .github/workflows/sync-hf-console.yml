@@ -1,0 +1,83 @@
+name: Sync to Hugging Face Space (Console)
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "hf-console/**"
+      - "frontend/**"
+      - ".github/workflows/sync-hf-console.yml"
+  workflow_dispatch: {}
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: hf-console-sync
+      cancel-in-progress: false
+    env:
+      HF_USERNAME: ${{ secrets.HF_USERNAME }}
+      HF_CONSOLE_SPACE: ${{ secrets.HF_CONSOLE_SPACE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate sources
+        run: |
+          set -euo pipefail
+          test -f hf-console/README.md
+          test -f hf-console/Dockerfile
+          test -f hf-console/nginx.conf
+          test -f frontend/package.json
+          test -f frontend/index.html
+          test -d frontend/src
+
+      - name: Build deploy tree and push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HF_USERNAME:-}" ] || [ -z "${HF_CONSOLE_SPACE:-}" ]; then
+            echo "❌ Missing HF_USERNAME or HF_CONSOLE_SPACE repo Secrets."
+            echo "   Add them under: Settings → Secrets and variables → Actions → Secrets."
+            exit 1
+          fi
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "❌ Missing HF_TOKEN secret (write token for Spaces)."
+            exit 1
+          fi
+
+          REMOTE_URL="https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/${HF_CONSOLE_SPACE}"
+
+          DEPLOY_DIR=$(mktemp -d)
+          echo "📦 Building deploy tree in ${DEPLOY_DIR} ..."
+
+          # 1. Console Space metadata + Dockerfile at the Space root.
+          cp -r hf-console/. "${DEPLOY_DIR}/"
+
+          # 2. Frontend source under ./frontend so the Dockerfile's
+          #    "COPY frontend/" instructions resolve during the HF build.
+          mkdir -p "${DEPLOY_DIR}/frontend"
+          cp -r frontend/. "${DEPLOY_DIR}/frontend/"
+
+          # 3. Strip anything the Space doesn't need (no node_modules,
+          #    no built artifacts; HF rebuilds inside the Docker stage).
+          rm -rf "${DEPLOY_DIR}/frontend/node_modules" \
+                 "${DEPLOY_DIR}/frontend/dist" \
+                 "${DEPLOY_DIR}/frontend/.vite"
+
+          cd "${DEPLOY_DIR}"
+          git init -b main
+          git lfs install --skip-smudge 2>/dev/null || true
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Deploy console from ${GITHUB_SHA::8}"
+
+          echo "🔁 Pushing deploy tree → HF Space main..."
+          git push --force "${REMOTE_URL}" main
+
+          echo "✅ Console synced to https://huggingface.co/spaces/${HF_USERNAME}/${HF_CONSOLE_SPACE}"

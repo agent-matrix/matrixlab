@@ -44,6 +44,125 @@ Each run is stateless-by-default: no persistent host filesystem exposure, no cro
 
 ---
 
+## How it works
+
+MatrixLab separates the *control plane* — a single FastAPI service that owns the HTTP contract — from the *execution plane*, a set of ephemeral, per-language sandbox containers spawned through the host Docker daemon. The runner never executes user code in its own address space. Every request becomes a dedicated `docker run`, and the container is destroyed once the call returns.
+
+### Components
+
+| Component | Image | Role |
+|---|---|---|
+| **Runner** | `ruslanmv/matrixlab-runner` | The HTTP service. Owns request validation, workspace preparation, image dispatch, artifact capture, and lifecycle endpoints. Stateless and horizontally scalable. |
+| **Sandbox images** | `ruslanmv/matrix-lab-sandbox-*` | One small image per language toolchain (`python`, `node`, `go`, `rust`, `java`, `dotnet`, `utils`, `build`). The runner selects an image from the `language` field of each request. |
+| **Job workspace** | Bind-mounted directory | A per-request directory containing the user's source file and the runner's bookkeeping. Mounted into the sandbox at `/workspace`; destroyed at the end of the request. |
+
+### Request lifecycle
+
+1. The caller submits `POST /code/run` with `{ language, code, timeout, … }`. GitPilot, MCP clients, and CI systems all use the same contract.
+2. The runner allocates a job directory under `MATRIXLAB_LOCAL_JOBS_DIR`, writes the source file (`main.py`, `main.js`, `script.sh`, …), and prepares an output directory for artifacts.
+3. The runner invokes `docker run` against the matching sandbox image, bind-mounting the job directory at `/workspace` and the output directory at `/output`. Resource limits, network policy, and pull policy are applied at this point.
+4. The sandbox executes the language-appropriate entry command (`python main.py`, `node main.js`, …) and writes any files to `/output`.
+5. The runner captures `exit_code`, `stdout`, `stderr`, `duration_ms`, and the artifact set; tears down the container and the job directory; and returns a structured JSON response.
+
+### Host filesystem requirement
+
+Because the runner typically operates inside a container while dispatching sandboxes through the host Docker daemon (`/var/run/docker.sock`), the job directory must be reachable at the same path from both perspectives. Failing to share that path produces an empty bind-mount and a `No such file or directory` error inside the sandbox.
+
+Production deployments share a single host directory at an identical path on both sides:
+
+```bash
+-v /var/lib/matrixlab/jobs:/var/lib/matrixlab/jobs \
+-e MATRIXLAB_LOCAL_JOBS_DIR=/var/lib/matrixlab/jobs \
+-e MATRIXLAB_HOST_JOBS_DIR=/var/lib/matrixlab/jobs
+```
+
+The values of `MATRIXLAB_LOCAL_JOBS_DIR` and `MATRIXLAB_HOST_JOBS_DIR` are otherwise independent, supporting deployments where Docker-in-Docker, rootless containers, or remote daemons translate paths between namespaces.
+
+---
+
+## Deploying from Docker Hub
+
+The runner and the eight sandbox images are published to Docker Hub on every release and on every commit to the default branch. Tags published per image:
+
+| Tag pattern | When applied | Intended consumer |
+|---|---|---|
+| `latest` | Release only | Production deployments tracking the latest stable release |
+| `vX.Y.Z`, `X.Y.Z`, `X.Y`, `X` | Release and manual dispatch | Pinned production deployments |
+| `sha-<short>` | Every build | Reproducible references for any commit |
+| `master`, `edge` | Push to default branch | Pre-release and integration testing |
+
+Recommended production launch:
+
+```bash
+mkdir -p /var/lib/matrixlab/jobs
+chmod 755 /var/lib/matrixlab/jobs
+
+docker run -d --name matrixlab --restart unless-stopped \
+  -p 8000:8000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/matrixlab/jobs:/var/lib/matrixlab/jobs \
+  -e MATRIXLAB_LOCAL_JOBS_DIR=/var/lib/matrixlab/jobs \
+  -e MATRIXLAB_HOST_JOBS_DIR=/var/lib/matrixlab/jobs \
+  -e MATRIXLAB_BEARER_TOKEN="$(openssl rand -hex 32)" \
+  ruslanmv/matrixlab-runner:latest
+
+curl -fsS http://localhost:8000/health
+```
+
+Per-language sandbox images are pulled lazily on first use. Pre-pulling them at startup reduces first-request latency:
+
+```bash
+for lang in python node utils go rust java dotnet build; do
+  docker pull "ruslanmv/matrix-lab-sandbox-${lang}:latest"
+done
+```
+
+### Published images
+
+| Image | Contents |
+|---|---|
+| `ruslanmv/matrixlab-runner` | HTTP dispatcher (the service you deploy) |
+| `ruslanmv/matrix-lab-sandbox-python` | Python 3, pip |
+| `ruslanmv/matrix-lab-sandbox-node` | Node.js, npm |
+| `ruslanmv/matrix-lab-sandbox-go` | Go toolchain |
+| `ruslanmv/matrix-lab-sandbox-rust` | rustc, cargo |
+| `ruslanmv/matrix-lab-sandbox-java` | JDK |
+| `ruslanmv/matrix-lab-sandbox-dotnet` | .NET SDK |
+| `ruslanmv/matrix-lab-sandbox-utils` | bash, find, ripgrep, unzip |
+| `ruslanmv/matrix-lab-sandbox-build` | gcc, make, build-essential |
+
+---
+
+## Configuration
+
+All runtime behavior is controlled through environment variables. Set them on `docker run -e`, in your orchestrator's container spec, or in your shell before `make run`.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MATRIXLAB_LOCAL_JOBS_DIR` | `/app/runner_tmp` | Path inside the runner container where job workspaces are written. |
+| `MATRIXLAB_HOST_JOBS_DIR` | matches local | Path on the host filesystem that maps to the local jobs directory. Required when running in a container that dispatches through the host Docker daemon. |
+| `MATRIXLAB_IMAGE_NAMESPACE` | `ruslanmv` (in the published image) | Registry namespace prefixed to sandbox image references. Empty when running against locally-built images. |
+| `MATRIXLAB_DOCKER_PULL` | `missing` | Sandbox image pull policy. One of `always`, `missing`, `never`. |
+| `MATRIXLAB_BEARER_TOKEN` | unset | When set, mutating endpoints require `Authorization: Bearer <token>`. Recommended for any deployment reachable beyond `localhost`. |
+| `MATRIXLAB_WARM_POOL_ENABLED` | `0` | Enables the Docker freezer-based warm pool for sub-second cold starts. |
+| `MATRIXLAB_WARM_POOL_MIN` / `_MAX` | `3` / `5` | Warm pool size bounds. |
+| `MATRIXLAB_WARM_POOL_IMAGES` | unset | Comma-separated language list to maintain in the warm pool, e.g. `python,node`. |
+
+---
+
+## GitPilot integration
+
+GitPilot ships an installation flow for MatrixLab under **Admin → Sandbox → Install MatrixLab Addon**. The installer performs the production deployment described above on the operator's behalf:
+
+1. Pulls `ruslanmv/matrixlab-runner` and the baseline sandbox images.
+2. Starts the runner container with the required volume mounts and environment variables.
+3. Probes `GET /health` until the runner reports ready.
+4. Switches GitPilot's active sandbox backend to `matrixlab`, routing the **Run** action on chat code blocks and the agent's `EXECUTE` planner step to this runner.
+
+A second installation mode under *Advanced → Local clone install* clones this repository, builds a dedicated Python virtual environment, and runs the runner natively from `runner/`. This mode is appropriate for operators who maintain the runner from source.
+
+---
+
 ## What MatrixLab is (and is not)
 
 ### ✅ MatrixLab **is**
