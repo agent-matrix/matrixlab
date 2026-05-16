@@ -1,0 +1,342 @@
+name: 📦 Publish Docker (Docker Hub)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag (e.g., v1.2.3 or 1.2.3)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-publish
+  cancel-in-progress: true
+
+jobs:
+  build-runner:
+    name: Build & Push Runner (Docker Hub)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Normalize version from release tag or manual input
+      - name: Derive release version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+          else
+            RAW="${{ github.event.inputs.version }}"
+          fi
+          if [ -z "$RAW" ]; then
+            echo "Version not provided."; exit 1
+          fi
+          if [[ "$RAW" =~ ^v ]]; then
+            RELEASE_TAG="$RAW"
+            SEMVER="${RAW#v}"
+          else
+            RELEASE_TAG="v$RAW"
+            SEMVER="$RAW"
+          fi
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+          echo "SEMVER=$SEMVER" >> $GITHUB_ENV
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+          echo "Resolved RELEASE_TAG=${RELEASE_TAG}, SEMVER=${SEMVER}, SHORT_SHA=${SHORT_SHA}"
+
+      # docker.io requires lowercase namespace
+      - name: Compute image name (lowercase)
+        id: img
+        shell: bash
+        run: |
+          USER_RAW="${{ secrets.DOCKERHUB_USERNAME }}"
+          USER_LC="${USER_RAW,,}"
+          IMAGE="docker.io/${USER_LC}/matrixlab-runner"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "Image: $IMAGE"
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub login
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            # stable semver tags (always)
+            type=raw,value=v${{ env.SEMVER }}
+            type=semver,pattern={{version}},value=${{ env.SEMVER }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }}
+            type=semver,pattern={{major}},value=${{ env.SEMVER }}
+            # short sha tag (always)
+            type=raw,value=sha-${{ env.SHORT_SHA }}
+            # latest only on release
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+          labels: |
+            org.opencontainers.image.title=matrixlab-runner
+            org.opencontainers.image.description=MatrixLab Runner — HTTP service that dispatches code into per-language sandbox containers
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.SEMVER }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ env.BUILD_DATE }}
+
+      - name: Build & push runner (Docker Hub)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./runner
+          file: ./runner/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=runner
+          cache-to: type=gha,mode=max,scope=runner
+          build-args: |
+            BUILD_VERSION=${{ env.SEMVER }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+
+      # Sanity guard: the runner must boot and answer /health
+      - name: Smoke test — runner /health
+        shell: bash
+        run: |
+          REF="${IMAGE}:v${SEMVER}"
+          docker run -d --name matrixlab-runner-smoke -p 8000:8000 "$REF"
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              echo "OK: /health responded"
+              docker stop matrixlab-runner-smoke
+              docker rm matrixlab-runner-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "FAIL: /health did not respond"
+          docker logs matrixlab-runner-smoke
+          docker stop matrixlab-runner-smoke
+          docker rm matrixlab-runner-smoke
+          exit 1
+
+      - name: Inspect multi-arch manifest (release tag)
+        if: always()
+        shell: bash
+        run: |
+          echo "Inspecting v${SEMVER}…"
+          docker buildx imagetools inspect "${IMAGE}:v${SEMVER}" || true
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "Inspecting latest…"
+            docker buildx imagetools inspect "${IMAGE}:latest" || true
+          fi
+
+  build-sandboxes:
+    name: Build & Push ${{ matrix.image }} (Docker Hub)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: matrix-lab-sandbox-utils
+            context: ./sandbox-utils
+            description: Shared utility image for MatrixLab sandboxes
+          - image: matrix-lab-sandbox-python
+            context: ./sandbox-python
+            description: Python language sandbox for MatrixLab
+          - image: matrix-lab-sandbox-node
+            context: ./sandbox-node
+            description: Node.js language sandbox for MatrixLab
+          - image: matrix-lab-sandbox-go
+            context: ./sandbox-go
+            description: Go language sandbox for MatrixLab
+          - image: matrix-lab-sandbox-rust
+            context: ./sandbox-rust
+            description: Rust language sandbox for MatrixLab
+          - image: matrix-lab-sandbox-java
+            context: ./sandbox-java
+            description: Java language sandbox for MatrixLab
+          - image: matrix-lab-sandbox-dotnet
+            context: ./sandbox-dotnet
+            description: .NET language sandbox for MatrixLab
+          - image: matrix-lab-sandbox-build
+            context: ./sandbox-build
+            description: Build-tools sandbox for MatrixLab
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive release version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+          else
+            RAW="${{ github.event.inputs.version }}"
+          fi
+          if [ -z "$RAW" ]; then
+            echo "Version not provided."; exit 1
+          fi
+          if [[ "$RAW" =~ ^v ]]; then
+            RELEASE_TAG="$RAW"
+            SEMVER="${RAW#v}"
+          else
+            RELEASE_TAG="v$RAW"
+            SEMVER="$RAW"
+          fi
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+          echo "SEMVER=$SEMVER" >> $GITHUB_ENV
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+
+      - name: Compute image name (lowercase)
+        id: img
+        shell: bash
+        run: |
+          USER_RAW="${{ secrets.DOCKERHUB_USERNAME }}"
+          USER_LC="${USER_RAW,,}"
+          IMAGE="docker.io/${USER_LC}/${{ matrix.image }}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "Image: $IMAGE"
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub login
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=v${{ env.SEMVER }}
+            type=semver,pattern={{version}},value=${{ env.SEMVER }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }}
+            type=semver,pattern={{major}},value=${{ env.SEMVER }}
+            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.SEMVER }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ env.BUILD_DATE }}
+
+      - name: Build & push sandbox (Docker Hub)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          build-args: |
+            BUILD_VERSION=${{ env.SEMVER }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+
+      - name: Inspect multi-arch manifest (release tag)
+        if: always()
+        shell: bash
+        run: |
+          echo "Inspecting v${SEMVER}…"
+          docker buildx imagetools inspect "${IMAGE}:v${SEMVER}" || true
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "Inspecting latest…"
+            docker buildx imagetools inspect "${IMAGE}:latest" || true
+          fi
+
+  integration-test:
+    name: Integration test (runner + python sandbox)
+    needs: [build-runner, build-sandboxes]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Docker Hub login
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Derive release version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+          else
+            RAW="${{ github.event.inputs.version }}"
+          fi
+          if [[ "$RAW" =~ ^v ]]; then SEMVER="${RAW#v}"; else SEMVER="$RAW"; fi
+          echo "SEMVER=$SEMVER" >> $GITHUB_ENV
+
+      - name: Pull, boot, and probe
+        shell: bash
+        run: |
+          USER_LC="${{ secrets.DOCKERHUB_USERNAME }}"
+          USER_LC="${USER_LC,,}"
+          RUNNER="docker.io/${USER_LC}/matrixlab-runner:v${SEMVER}"
+          SANDBOX_PY="docker.io/${USER_LC}/matrix-lab-sandbox-python:v${SEMVER}"
+
+          docker pull "$RUNNER"
+          docker pull "$SANDBOX_PY"
+
+          docker run -d --name matrixlab-it \
+            -p 8000:8000 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$RUNNER"
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
+          BODY='{"language":"python","code":"print(2+2)","timeout":30}'
+          OUT="$(curl -sS -X POST http://localhost:8000/code/run \
+            -H "Content-Type: application/json" -d "$BODY")"
+          echo "Response: $OUT"
+
+          docker stop matrixlab-it
+          docker rm matrixlab-it
+
+          if ! echo "$OUT" | grep -q '"stdout"'; then
+            echo "FAIL: /code/run did not return stdout"
+            exit 1
+          fi
+          echo "OK: /code/run smoke test passed"
