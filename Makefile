@@ -171,20 +171,26 @@ run-backend: build
 run-frontend: frontend-install
 	@mkdir -p "$(FRONTEND_DIR)"
 	@FRONTEND_PORT="$(shell echo '$(FRONTEND_URL)' | sed -E 's|.*:([0-9]+).*|\1|')"; \
-	if curl -fsS -o /dev/null -m 1 "$(FRONTEND_URL)/"; then \
+	WAIT_S=$${MATRIXLAB_FRONTEND_WAIT_SECONDS:-45}; \
+	if curl -fs -o /dev/null -m 1 "$(FRONTEND_URL)/" 2>/dev/null; then \
 		echo "✅ Frontend already running at $(FRONTEND_URL)"; \
 	else \
 		rm -f "$(FRONTEND_PID)"; \
-		echo "🚀 Starting frontend at $(FRONTEND_URL)"; \
+		echo "🚀 Starting frontend at $(FRONTEND_URL) (cold start can take ~10–30s)…"; \
 		(cd "$(FRONTEND_DIR)" && VITE_MATRIXLAB_API_URL="$(RUNNER_URL)" MATRIXLAB_FRONTEND_PORT="$$FRONTEND_PORT" nohup npm run dev > .matrixlab-frontend.log 2>&1 & echo $$! > .matrixlab-frontend.pid); \
-		for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
-			if curl -fsS -o /dev/null -m 1 "$(FRONTEND_URL)/"; then \
-				echo "✅ Frontend started at $(FRONTEND_URL) (pid $$(cat $(FRONTEND_PID)))"; \
+		i=0; \
+		while [ "$$i" -lt "$$WAIT_S" ]; do \
+			if curl -fs -o /dev/null -m 1 "$(FRONTEND_URL)/" 2>/dev/null; then \
+				echo "✅ Frontend started at $(FRONTEND_URL) (pid $$(cat $(FRONTEND_PID)), $${i}s)"; \
 				exit 0; \
 			fi; \
+			i=$$((i + 1)); \
 			sleep 1; \
 		done; \
-		echo "❌ Frontend did not answer on $(FRONTEND_URL) within 15s; see $(FRONTEND_LOG)" 1>&2; \
+		echo "❌ Frontend did not answer on $(FRONTEND_URL) within $${WAIT_S}s" 1>&2; \
+		echo "--- last 40 lines of $(FRONTEND_LOG) ---" 1>&2; \
+		tail -n 40 "$(FRONTEND_LOG)" 1>&2 || true; \
+		echo "--- end ---" 1>&2; \
 		exit 1; \
 	fi
 
