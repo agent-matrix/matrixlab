@@ -15,8 +15,12 @@ frontend/.matrixlab-frontend.log
 # operators run `make` from the project root, others from frontend/.
 .matrixlab-frontend.pid
 .matrixlab-frontend.log
-# Python build metadata regenerated on every `pip install -e .`.
-matrixlab.egg-info/
+# Python build metadata regenerated on every ``pip install -e .``
+# or ``python -m build``.  The directory name follows
+# ``[project].name`` from pyproject.toml; we renamed the PyPI
+# distribution from ``matrixlab`` to ``agent-matrix-lab``, so use a
+# glob to catch the current name plus any future rename.
+*.egg-info/
 # uv lockfile — matrixlab uses setuptools, not uv, as its primary
 # package manager.  uv.lock can appear as a side effect of
 # contributors running ``uv run`` for ad-hoc builds; ignore it so

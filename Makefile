@@ -174,25 +174,42 @@ run-frontend: frontend-install
 	WAIT_S=$${MATRIXLAB_FRONTEND_WAIT_SECONDS:-45}; \
 	if curl -fs -o /dev/null -m 1 "$(FRONTEND_URL)/" 2>/dev/null; then \
 		echo "✅ Frontend already running at $(FRONTEND_URL)"; \
-	else \
-		rm -f "$(FRONTEND_PID)"; \
-		echo "🚀 Starting frontend at $(FRONTEND_URL) (cold start can take ~10–30s)…"; \
-		(cd "$(FRONTEND_DIR)" && VITE_MATRIXLAB_API_URL="$(RUNNER_URL)" MATRIXLAB_FRONTEND_PORT="$$FRONTEND_PORT" nohup npm run dev > .matrixlab-frontend.log 2>&1 & echo $$! > .matrixlab-frontend.pid); \
-		i=0; \
-		while [ "$$i" -lt "$$WAIT_S" ]; do \
-			if curl -fs -o /dev/null -m 1 "$(FRONTEND_URL)/" 2>/dev/null; then \
-				echo "✅ Frontend started at $(FRONTEND_URL) (pid $$(cat $(FRONTEND_PID)), $${i}s)"; \
-				exit 0; \
-			fi; \
-			i=$$((i + 1)); \
-			sleep 1; \
-		done; \
-		echo "❌ Frontend did not answer on $(FRONTEND_URL) within $${WAIT_S}s" 1>&2; \
-		echo "--- last 40 lines of $(FRONTEND_LOG) ---" 1>&2; \
-		tail -n 40 "$(FRONTEND_LOG)" 1>&2 || true; \
-		echo "--- end ---" 1>&2; \
+		exit 0; \
+	fi; \
+	rm -f "$(FRONTEND_PID)"; \
+	echo "🚀 Starting frontend at $(FRONTEND_URL) (cold start can take ~10–30s)…"; \
+	cd "$(FRONTEND_DIR)"; \
+	VITE_MATRIXLAB_API_URL="$(RUNNER_URL)" MATRIXLAB_FRONTEND_PORT="$$FRONTEND_PORT" \
+		nohup npm run dev > .matrixlab-frontend.log 2>&1 & \
+	FRONTEND_PID_VALUE=$$!; \
+	cd - > /dev/null; \
+	if [ -z "$$FRONTEND_PID_VALUE" ]; then \
+		echo "❌ Failed to capture frontend PID — nohup did not background cleanly." 1>&2; \
 		exit 1; \
-	fi
+	fi; \
+	echo "$$FRONTEND_PID_VALUE" > "$(FRONTEND_PID)"; \
+	i=0; \
+	while [ "$$i" -lt "$$WAIT_S" ]; do \
+		if curl -fs -o /dev/null -m 1 "$(FRONTEND_URL)/" 2>/dev/null; then \
+			echo "✅ Frontend started at $(FRONTEND_URL) (pid $$FRONTEND_PID_VALUE, $${i}s)"; \
+			exit 0; \
+		fi; \
+		if ! kill -0 "$$FRONTEND_PID_VALUE" 2>/dev/null; then \
+			echo "❌ Frontend process (pid $$FRONTEND_PID_VALUE) exited before binding" 1>&2; \
+			echo "--- last 40 lines of $(FRONTEND_LOG) ---" 1>&2; \
+			tail -n 40 "$(FRONTEND_LOG)" 1>&2 || true; \
+			echo "--- end ---" 1>&2; \
+			rm -f "$(FRONTEND_PID)"; \
+			exit 1; \
+		fi; \
+		i=$$((i + 1)); \
+		sleep 1; \
+	done; \
+	echo "❌ Frontend did not answer on $(FRONTEND_URL) within $${WAIT_S}s" 1>&2; \
+	echo "--- last 40 lines of $(FRONTEND_LOG) ---" 1>&2; \
+	tail -n 40 "$(FRONTEND_LOG)" 1>&2 || true; \
+	echo "--- end ---" 1>&2; \
+	exit 1
 
 status:
 	@docker compose ps
@@ -215,15 +232,38 @@ stop: stop-frontend
 	@echo "✅ Stopped backend containers and frontend"
 
 stop-frontend:
-	@if [ -f "$(FRONTEND_PID)" ]; then \
+	@# Kill the whole npm + vite tree.  npm run dev spawns vite as a
+	# child; killing only the npm PID leaves vite running (and the
+	# frontend port held).  Belt-and-suspenders:
+	#   1. Tear down the pidfile-recorded process and its descendants
+	#      (the canonical case)
+	#   2. Sweep any vite/npm process bound to FRONTEND_PORT in case
+	#      the pidfile is stale or missing (e.g. operator killed make
+	#      mid-flight on a previous run)
+	@FRONTEND_PORT="$(shell echo '$(FRONTEND_URL)' | sed -E 's|.*:([0-9]+).*|\1|')"; \
+	stopped=0; \
+	if [ -f "$(FRONTEND_PID)" ]; then \
 		PID="$$(cat "$(FRONTEND_PID)")"; \
-		if kill -0 "$$PID" 2>/dev/null; then \
-			echo "Stopping frontend (pid $$PID)"; \
+		if [ -n "$$PID" ] && kill -0 "$$PID" 2>/dev/null; then \
+			echo "Stopping frontend (pid $$PID + descendants)"; \
 			pkill -P "$$PID" 2>/dev/null || true; \
 			kill "$$PID" 2>/dev/null || true; \
+			stopped=1; \
 		fi; \
 		rm -f "$(FRONTEND_PID)"; \
-	else \
+	fi; \
+	if command -v lsof >/dev/null 2>&1; then \
+		LEFTOVER="$$(lsof -nPi:$$FRONTEND_PORT -sTCP:LISTEN -t 2>/dev/null || true)"; \
+		if [ -n "$$LEFTOVER" ]; then \
+			echo "Sweeping leftover process(es) on :$$FRONTEND_PORT — $$LEFTOVER"; \
+			for p in $$LEFTOVER; do \
+				pkill -P "$$p" 2>/dev/null || true; \
+				kill "$$p" 2>/dev/null || true; \
+			done; \
+			stopped=1; \
+		fi; \
+	fi; \
+	if [ "$$stopped" = "0" ]; then \
 		echo "Frontend not running"; \
 	fi
 
