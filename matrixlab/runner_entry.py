@@ -3,7 +3,7 @@
 Hosts the FastAPI Runner natively (no Docker for the runner itself)
 when the operator installs the optional ``[runner]`` extras::
 
-    pip install matrix-lab[runner]
+    pip install agent-matrix-lab[runner]
     matrixlab-runner serve --host 0.0.0.0 --port 8765
 
 Failing to install the extras prints a friendly error rather than a
@@ -30,7 +30,7 @@ _EXTRA_HINT = (
     "matrixlab-runner needs the optional [runner] extras (FastAPI + "
     "uvicorn) which are NOT installed.\n\n"
     "Install them with:\n\n"
-    "    pip install 'matrix-lab[runner]'\n"
+    "    pip install 'agent-matrix-lab[runner]'\n"
 )
 
 
@@ -88,11 +88,11 @@ def _print_usage() -> None:
 def _cmd_version() -> int:
     try:
         from importlib.metadata import version, PackageNotFoundError
-        print(version("matrix-lab"))
+        print(version("agent-matrix-lab"))
         return 0
     except Exception:
         # Fallback for editable installs / pre-publish source trees.
-        print("matrix-lab (development build)")
+        print("agent-matrix-lab (development build)")
         return 0
 
 

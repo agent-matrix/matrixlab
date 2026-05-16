@@ -3,12 +3,17 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# PyPI distribution name. ``matrixlab`` (no hyphen) is squatted by an
-# unrelated v0.0.1 placeholder; the hyphenated form is canonically
-# distinct under PEP 503 and what end users ``pip install``. The
-# Python import name stays ``matrixlab`` (see ``[tool.setuptools]``
-# below), so no source consumer needs to update an import statement.
-name = "matrix-lab"
+# PyPI distribution name. ``matrixlab`` is squatted by an unrelated
+# v0.0.1 placeholder, and ``matrix-lab`` was rejected by PyPI's
+# similarity check (too close to the squatter under their fuzzy
+# heuristic).  ``agent-matrix-lab`` adds the vendor prefix (matching
+# our GitHub org), clears the similarity check, and follows the same
+# pattern enterprise Python uses when the bare brand is taken
+# (``google-cloud-storage``, ``azure-keyvault-secrets``,
+# ``aws-cdk-lib``).  The Python import name stays ``matrixlab`` (see
+# ``[tool.setuptools]`` below) so no source consumer needs to update
+# a single ``from matrixlab import …`` line.
+name = "agent-matrix-lab"
 version = "0.1.0"
 description = "Safety-first sandbox execution for agents, CI, and MCP tools — Python SDK and optional embedded runner."
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -45,7 +50,7 @@ classifiers = [
 ]
 
 # Core dependencies — everything the four ``[project.scripts]`` need
-# to import cleanly after a bare ``pip install matrix-lab``.  Keeping
+# to import cleanly after a bare ``pip install agent-matrix-lab``.  Keeping
 # the heavier HTTP server stack (FastAPI/uvicorn) behind the
 # ``[runner]`` extra preserves the "SDK first" install profile.
 dependencies = [
@@ -87,7 +92,7 @@ hf = [
 
 # Convenience meta-extra that pulls everything an end-user touches.
 all = [
-  "matrix-lab[runner,cli,hf]",
+  "agent-matrix-lab[runner,cli,hf]",
 ]
 
 # Contributor tooling — never required to use the package.
@@ -108,8 +113,8 @@ matrixlab-mcp = "matrixlab.mcp_server:cli"
 matrixlab-inspect = "matrixlab.mcp_inspector:cli"
 matrixlab-start = "tools.bootstrap:main"
 matrixlab-sandbox = "matrixlab.sandbox_cli:main"
-# Native runner entry point.  Refuses to start unless ``matrix-lab[runner]``
-# extras are installed, so a bare ``pip install matrix-lab`` doesn't
+# Native runner entry point.  Refuses to start unless ``agent-matrix-lab[runner]``
+# extras are installed, so a bare ``pip install agent-matrix-lab`` doesn't
 # produce a binary that crashes on import.
 matrixlab-runner = "matrixlab.runner_entry:main"
 
