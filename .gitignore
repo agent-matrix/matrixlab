@@ -11,5 +11,11 @@ frontend/node_modules/
 frontend/dist/
 frontend/.matrixlab-frontend.pid
 frontend/.matrixlab-frontend.log
+# Match the pidfile / log wherever the Makefile lands them — some
+# operators run `make` from the project root, others from frontend/.
+.matrixlab-frontend.pid
+.matrixlab-frontend.log
+# Python build metadata regenerated on every `pip install -e .`.
+matrixlab.egg-info/
 /runner_envs
 /runner_state

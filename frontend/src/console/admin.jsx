@@ -1,8 +1,30 @@
 import React from "react";
 import { Icon, Pill, StatCard, seedPool, seedEnvironments, seedArtifacts } from "./shared.jsx";
+import { useRunnerState, getSettings } from "./api.js";
+
+// Render a feature-supported pill from capability flags.  ``undefined``
+// (= server didn't advertise) reads as "Unknown" rather than "Yes" so
+// we never lie about capabilities the runner doesn't expose.
+function featurePill(value, label = "Supported") {
+  if (value === true)  return <Pill tone="success">{label}</Pill>;
+  if (value === false) return <Pill tone="warn">Disabled</Pill>;
+  return <Pill tone="info">Unknown</Pill>;
+}
 
 // ----- Admin: Runtime Health -----
 function AdminRuntime() {
+  const { health, capabilities, pool, error, loading, refresh } = useRunnerState();
+  const conn = getSettings();
+  const runnerUrl = conn.runnerUrl || "(same origin · dev proxy)";
+
+  // Derive sandbox counts from /pool/status when available, fall back to
+  // dashes so the operator can tell live data from cached UI.
+  const ready    = pool?.total_ready    ?? pool?.ready    ?? null;
+  const starting = pool?.total_starting ?? pool?.starting ?? null;
+  const failed   = pool?.total_failed   ?? pool?.failed   ?? null;
+  const runs24h  = health?.runs_24h ?? health?.run_count_24h ?? null;
+  const tone     = error ? "danger" : "success";
+
   return (
     <div className="content wide">
       <div className="page-head">
@@ -11,16 +33,24 @@ function AdminRuntime() {
           <p className="page-sub">Operator view of the MatrixLab runner and sandbox fleet.</p>
         </div>
         <div className="page-actions">
-          <button className="btn"><Icon name="refresh"/> Run health check</button>
+          <button className="btn" onClick={refresh} disabled={loading}>
+            <Icon name="refresh"/> {loading ? "Refreshing…" : "Run health check"}
+          </button>
           <button className="btn"><Icon name="terminal"/> Open runner logs</button>
         </div>
       </div>
 
+      {error && (
+        <div className="field-banner err" style={{ marginBottom: 16 }}>
+          ✗ Runner unreachable: {error}. Configure the Runner URL in Settings.
+        </div>
+      )}
+
       <div className="grid-cards" style={{ marginBottom: 18 }}>
-        <StatCard label="Ready sandboxes"    value="11" meta="across 6 images" tone="success"/>
-        <StatCard label="Starting sandboxes" value="2"  meta="provisioning"/>
-        <StatCard label="Failed sandboxes"   value="1"  meta="matrixlab-build" tone="danger"/>
-        <StatCard label="Runs in 24h"        value="487" meta="98.4% success rate"/>
+        <StatCard label="Ready sandboxes"    value={ready    ?? "—"} meta={ready    != null ? "from /pool/status" : "no data"} tone={tone}/>
+        <StatCard label="Starting sandboxes" value={starting ?? "—"} meta={starting != null ? "provisioning"       : "no data"}/>
+        <StatCard label="Failed sandboxes"   value={failed   ?? "—"} meta={failed   != null ? "needs attention"     : "no data"} tone={failed > 0 ? "danger" : undefined}/>
+        <StatCard label="Runs in 24h"        value={runs24h  ?? "—"} meta={runs24h  != null ? "from /health"        : "no data"}/>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, marginBottom: 16 }}>
@@ -30,20 +60,25 @@ function AdminRuntime() {
               <h3 className="card-title">Runner capabilities</h3>
               <div className="card-sub">Negotiated via GET /capabilities</div>
             </div>
-            <Pill tone="success">matrixlab.runner.v1</Pill>
+            <Pill tone={capabilities ? "success" : "warn"}>
+              {capabilities?.protocol || "matrixlab.runner.v1"}
+            </Pill>
           </div>
           <div className="card-pad">
             <div className="kv">
-              <div className="k">API URL</div><div className="v mono">http://localhost:8000</div>
-              <div className="k">Runner version</div><div className="v">0.4.2</div>
-              <div className="k">Streaming</div><div className="v"><Pill tone="success">Supported</Pill></div>
-              <div className="k">Artifacts</div><div className="v"><Pill tone="success">Supported · max 100 MB / run</Pill></div>
-              <div className="k">Repo run</div><div className="v"><Pill tone="success">Supported</Pill></div>
-              <div className="k">Workspace upload</div><div className="v"><Pill tone="success">Supported · max 50 MB</Pill></div>
-              <div className="k">Environment lifecycle</div><div className="v"><Pill tone="success">Supported</Pill></div>
-              <div className="k">Warm pool</div><div className="v"><Pill tone="success">Enabled · 4 images</Pill></div>
-              <div className="k">Polling interval</div><div className="v">5s</div>
-              <div className="k">Bearer auth</div><div className="v"><Pill tone="info">Required</Pill></div>
+              <div className="k">API URL</div><div className="v mono">{runnerUrl}</div>
+              <div className="k">Runner version</div><div className="v">{capabilities?.version || health?.version || "—"}</div>
+              <div className="k">Streaming</div><div className="v">{featurePill(capabilities?.features?.streaming)}</div>
+              <div className="k">Artifacts</div><div className="v">{featurePill(capabilities?.features?.artifacts)}</div>
+              <div className="k">Repo run</div><div className="v">{featurePill(capabilities?.features?.repo_clone || capabilities?.features?.repo_run)}</div>
+              <div className="k">Workspace upload</div><div className="v">{featurePill(capabilities?.features?.workspace_zip)}</div>
+              <div className="k">Warm pool</div><div className="v">
+                {pool ? <Pill tone="success">Enabled · {(pool.warm_images || pool.images || []).length || 0} images</Pill> : featurePill(undefined)}
+              </div>
+              <div className="k">Polling interval</div><div className="v">{conn.pollSeconds || 5}s</div>
+              <div className="k">Bearer auth</div><div className="v">
+                {conn.bearerToken ? <Pill tone="info">Configured</Pill> : <Pill tone="warn">None</Pill>}
+              </div>
             </div>
           </div>
         </div>

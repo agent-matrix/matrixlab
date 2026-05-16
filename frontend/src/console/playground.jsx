@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Icon, Pill } from "./shared.jsx";
+import { api } from "./api.js";
+
+// Map the playground's display language names to the canonical
+// language strings the runner's /code/run endpoint accepts.
+const LANGUAGE_TO_RUNNER = {
+  "Python":       "python",
+  "Node.js":      "javascript",
+  "JavaScript":   "javascript",
+  "Bash":         "bash",
+  "Shell":        "bash",
+};
 
 // ---- Lesson library ----
 const LESSONS = {
@@ -347,13 +358,57 @@ function Playground() {
   const runCell = async (id) => {
     setCells(cs => cs.map(c => c.id === id ? { ...c, status: "running", output: null } : c));
     const cell = cells.find(c => c.id === id);
-    // simulate provisioning latency
-    await new Promise(r => setTimeout(r, 350));
-    const result = fakeExecute(cell.lang, cell.code);
+    const startedAt = performance.now();
+
+    // Real execution: ship the cell to the runner's /code/run.  Falls
+    // back to the local fakeExecute if the runner is unconfigured or
+    // unreachable, so the design preview still works without a backend.
+    const runnerLang = LANGUAGE_TO_RUNNER[cell.lang];
+    let resolved;
+    if (runnerLang) {
+      try {
+        const resp = await api.codeRun({
+          language: runnerLang,
+          code: cell.code,
+          timeout: 60,
+          allow_network: network === "on",
+        });
+        // Strip the runner's "== Matrix Lab step: command ==" header
+        // line so the cell shows program output only.
+        const stdout = String(resp.stdout || "").replace(
+          /^== Matrix Lab step: [^=]+ ==\r?\n/, "",
+        );
+        const stderr = String(resp.stderr || "");
+        const lines = [
+          ...stdout.split("\n"),
+          ...(stderr ? ["", "[stderr]", ...stderr.split("\n")] : []),
+        ].filter((_, i, a) => i < a.length - 1 || _.length > 0);
+        resolved = {
+          status: resp.exit_code === 0 ? "passed" : "failed",
+          lines,
+          duration: ((resp.duration_ms ?? (performance.now() - startedAt)) / 1000).toFixed(1),
+          exit: resp.exit_code ?? -1,
+        };
+      } catch (err) {
+        // Surface the failure inline rather than silently mocking, so
+        // the operator sees the real cause (auth, network, language).
+        resolved = {
+          status: "failed",
+          lines: [`[runner unreachable] ${err.message || String(err)}`],
+          duration: ((performance.now() - startedAt) / 1000).toFixed(1),
+          exit: -1,
+        };
+      }
+    } else {
+      // Unknown language → keep the design preview behaviour.
+      await new Promise(r => setTimeout(r, 350));
+      resolved = fakeExecute(cell.lang, cell.code);
+    }
+
     setCells(cs => cs.map(c => c.id === id ? {
-      ...c, status: result.status, output: result.lines, duration: result.duration, exit: result.exit
+      ...c, status: resolved.status, output: resolved.lines,
+      duration: resolved.duration, exit: resolved.exit,
     } : c));
-    // increment sandbox runs counter
     if (cell.sandboxId) {
       setSandboxes(ss => ss.map(s => s.id === cell.sandboxId ? { ...s, runs: (s.runs || 0) + 1 } : s));
     }

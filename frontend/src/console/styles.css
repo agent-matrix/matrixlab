@@ -709,8 +709,15 @@ textarea.input { font-family: var(--ml-mono); font-size: 12.5px; line-height: 1.
 .modal-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
 .modal-foot {
   padding: 12px 20px; border-top: 1px solid var(--ml-border);
-  display: flex; justify-content: flex-end; gap: 8px;
+  display: flex; align-items: center; gap: 8px;
 }
+
+.field-banner {
+  margin-top: 8px; padding: 8px 12px; border-radius: 6px;
+  font-size: 12px;
+}
+.field-banner.ok  { background: var(--ml-success-soft); color: var(--ml-success); border: 1px solid var(--ml-success); }
+.field-banner.err { background: var(--ml-danger-soft);  color: var(--ml-danger);  border: 1px solid var(--ml-danger); }
 
 /* responsive niceties */
 @media (max-width: 900px) {
