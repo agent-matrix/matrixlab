@@ -34,6 +34,15 @@ function HFConsole() {
   const cmdHist = React.useRef([]);
   const cmdIdx = React.useRef(-1);
 
+  // Embedded inside the matrixhub.io modal iframe (?embed=1): show a close
+  // button in this (single) terminal header that asks the parent to close.
+  const embedded = React.useMemo(() => {
+    try { return !!new URLSearchParams(window.location.search).get("embed"); } catch (e) { return false; }
+  }, []);
+  function closeEmbed() {
+    try { window.parent && window.parent.postMessage({ type: "matrixlab:close" }, "*"); } catch (e) { /* no-op */ }
+  }
+
   const boot = useTypewriter(HF_BOOT, 9, !booted);
 
   React.useEffect(() => {
@@ -99,18 +108,21 @@ function HFConsole() {
     next();
   }
 
-  // Run a REAL hosted sandbox session against /mcp/* and stream its
-  // lifecycle events into the terminal. Triggered by `matrix mcp test`
-  // (or the "Test in sandbox" chip) when sandbox mode is on.
+  // Run a REAL hosted sandbox session against /mcp/* and stream its lifecycle
+  // events into the terminal. The SSE stream stays open for the whole 10-min
+  // session, so we MUST NOT hold the `streaming` input lock here — otherwise the
+  // composer would be disabled for the entire session. Instead we stream into a
+  // dedicated history block (by index) and leave the input live.
   async function runSandbox(entity, startCommand) {
     const SB = window.MatrixLabSandbox;
     if (!SB) { streamResponse({ tone: "err", lines: ["sandbox client not loaded"] }); return; }
-    setStreaming(true);
-    setHistory((h) => [...h, { tone: "matrix", lines: ["opening hosted sandbox …"] }]);
+    let idx = -1;
+    setHistory((h) => { idx = h.length; return [...h, { tone: "matrix", lines: ["opening hosted sandbox …"] }]; });
     const push = (line, tone) => setHistory((h) => {
+      if (idx < 0 || idx >= h.length) return h; // block was cleared — stop writing
       const c = h.slice();
-      const last = c[c.length - 1] || { tone: "matrix", lines: [] };
-      c[c.length - 1] = { tone: tone || last.tone || "matrix", lines: [...last.lines, line] };
+      const blk = c[idx];
+      c[idx] = { tone: tone || blk.tone || "matrix", lines: [...blk.lines, line] };
       return c;
     });
     const plan = {};
@@ -128,6 +140,7 @@ function HFConsole() {
         }
         if (ev.step === "ready") {
           push(`✓ sandbox ready · ttl ${ev.data && ev.data.ttl_remaining_seconds || "?"}s`, "ok");
+          push("you can keep typing — try: matrix mcp probe, matrix help", "dim");
           return;
         }
         push(`[${ev.step || "event"}] ${ev.message || ""}`.trimEnd(), tone);
@@ -144,7 +157,6 @@ function HFConsole() {
       push("verdict: PASS — safe to install", "ok");
       push("(sandbox backend offline — showing representative verdict)", "dim");
     } finally {
-      setStreaming(false);
       inputRef.current && inputRef.current.focus();
     }
   }
@@ -162,7 +174,40 @@ function HFConsole() {
       setTimeout(() => runSandbox(res.entity, res.start_command), 160);
       return;
     }
+    if (res && res.action === "search") {
+      setTimeout(() => runSearch(res.query, res.type, res.limit), 160);
+      return;
+    }
     setTimeout(() => streamResponse(res), 160);
+  }
+
+  // Real catalog search against the live Hub. We render into a dedicated
+  // history block (by index) and never hold the `streaming` input lock, so the
+  // composer stays live — same approach as runSandbox.
+  async function runSearch(query, type, limit) {
+    let idx = -1;
+    setHistory((h) => {
+      idx = h.length;
+      return [...h, { tone: "dim", lines: [`· searching catalog for "${query}"${type ? " --type " + type : ""} …`] }];
+    });
+    const replace = (tone, lines) => setHistory((h) => {
+      if (idx < 0 || idx >= h.length) return h; // block was cleared
+      const c = h.slice();
+      c[idx] = { tone, lines };
+      return c;
+    });
+    try {
+      const { items, total } = await window.catalogSearch(query, { type, limit });
+      const res = window.renderSearch(query, type, items, total);
+      replace(res.tone, res.lines);
+    } catch (e) {
+      replace("err", [
+        `hub unreachable — ${String((e && e.message) || e)}`,
+        "check your connection, then: matrix connection",
+      ]);
+    } finally {
+      inputRef.current && inputRef.current.focus();
+    }
   }
 
   function onKey(e) {
@@ -197,17 +242,28 @@ function HFConsole() {
             </p>
           </div>
         </div>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 9, fontFamily: "var(--hf-mono)", fontSize: 11,
-          color: "#34c873", border: "1px solid rgba(0,255,102,0.18)", borderRadius: 99, padding: "4px 11px", background: "rgba(0,255,102,0.04)" }}>
-          <span className="hf-ver" style={{ color: "#1f8a52" }}>matrix-cli 0.1.6 · sdk 0.1.9 · python 3.11+ ·</span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={{ position: "relative", width: 8, height: 8 }}>
-              <span style={{ position: "absolute", inset: 0, borderRadius: 99, background: "#00ff66", animation: "hfPing 1.8s ease-out infinite" }} />
-              <span style={{ position: "relative", display: "block", width: 8, height: 8, borderRadius: 99, background: "#00ff66", boxShadow: "0 0 8px #00ff66" }} />
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 9, fontFamily: "var(--hf-mono)", fontSize: 11,
+            color: "#34c873", border: "1px solid rgba(0,255,102,0.18)", borderRadius: 99, padding: "4px 11px", background: "rgba(0,255,102,0.04)" }}>
+            <span className="hf-ver" style={{ color: "#1f8a52" }}>matrix-cli 0.1.6 · sdk 0.1.9 · python 3.11+ ·</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ position: "relative", width: 8, height: 8 }}>
+                <span style={{ position: "absolute", inset: 0, borderRadius: 99, background: "#00ff66", animation: "hfPing 1.8s ease-out infinite" }} />
+                <span style={{ position: "relative", display: "block", width: 8, height: 8, borderRadius: 99, background: "#00ff66", boxShadow: "0 0 8px #00ff66" }} />
+              </span>
+              online
             </span>
-            online
           </span>
-        </span>
+          {embedded && (
+            <button type="button" onClick={closeEmbed} aria-label="Close" title="Close"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 30, height: 30,
+                borderRadius: 8, border: "1px solid rgba(0,255,102,0.2)", background: "transparent", color: "#34c873", cursor: "pointer" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* output */}

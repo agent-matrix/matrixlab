@@ -547,6 +547,26 @@ table.
 
 For full API examples and runtime variables, see `hf/README.md`.
 
+#### Verified reference servers
+
+These credential-free reference MCP servers were verified end-to-end in the
+sandbox (install → run → tool discovery). They make good smoke tests — none
+require API keys or secrets:
+
+| Server | Command the sandbox runs | Tools |
+| --- | --- | --- |
+| `filesystem` | `npx -y @modelcontextprotocol/server-filesystem /tmp` | 14 ✅ |
+| `everything` | `npx -y @modelcontextprotocol/server-everything` | 13 ✅ |
+| `memory` | `npx -y @modelcontextprotocol/server-memory` | 13 ✅ |
+| `time` | `uvx mcp-server-time` | 2 ✅ |
+| `sequential-thinking` | `npx -y @modelcontextprotocol/server-sequential-thinking` | 1 ✅ |
+| `fetch` | `uvx mcp-server-fetch` | ✅ |
+| `git` | `uvx mcp-server-git` | ✅ |
+
+> Tool counts reflect the reference servers at time of verification and may
+> change as upstream evolves. `filesystem` is the default plan used when a
+> session is started without a specific server.
+
 ---
 
 ## Matrix Maintainer mode (Agent-Matrix org operations)
