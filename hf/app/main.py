@@ -16,8 +16,10 @@ from pydantic import BaseModel, Field
 
 from app.runner_client import RunnerClient
 from app.sandbox import run_verification
+from app.mcp_sandbox import router as mcp_sandbox_router
 
-app = FastAPI(title="MatrixLab HF Backend", version="1.1.0")
+app = FastAPI(title="MatrixLab HF Backend", version="1.2.0")
+app.include_router(mcp_sandbox_router)
 
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -71,7 +73,7 @@ async def health():
 
     return {
         "status": "ok",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "runs": len(runs),
         "runner_url": runner.base_url,
         "runner": runner_status,
