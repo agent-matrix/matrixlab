@@ -1,12 +1,40 @@
-<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MatrixLab">
   <defs>
-    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#06B6D4"/>
-      <stop offset="100%" stop-color="#7C3AED"/>
+    <!-- phosphor green glow, matching matrixhub.io -->
+    <filter id="ml-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="ml-word" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9dffc4"/>
+      <stop offset="100%" stop-color="#00ff66"/>
     </linearGradient>
   </defs>
-  <rect x="20" y="20" width="140" height="140" rx="28" fill="url(#g1)"/>
-  <path d="M55 120V60h18l17 28 17-28h18v60h-16V88l-14 22H99L85 88v32H55Z" fill="white"/>
-  <text x="190" y="92" fill="#E5E7EB" font-size="48" font-family="Inter,Segoe UI,Arial" font-weight="700">matrixlab</text>
-  <text x="192" y="124" fill="#94A3B8" font-size="18" font-family="Inter,Segoe UI,Arial">Safety-first sandbox execution for agents and CI</text>
+
+  <!-- backdrop -->
+  <rect width="640" height="180" rx="18" fill="#000402"/>
+  <!-- subtle inner border -->
+  <rect x="1" y="1" width="638" height="178" rx="17" fill="none" stroke="rgba(0,255,102,0.16)"/>
+
+  <!-- monogram: terminal tile with green glow -->
+  <rect x="22" y="22" width="136" height="136" rx="28" fill="#050a07" stroke="#00ff66" stroke-opacity="0.55"/>
+  <rect x="22" y="22" width="136" height="136" rx="28" fill="rgba(0,255,102,0.06)"/>
+  <g filter="url(#ml-glow)" stroke="#00ff66" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- prompt chevron -->
+    <path d="M58 70 L84 90 L58 110"/>
+    <!-- cursor underscore -->
+    <path d="M96 112 H124"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="196" y="92" fill="url(#ml-word)" filter="url(#ml-glow)"
+        font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,Menlo,Consolas,monospace"
+        font-size="54" font-weight="800" letter-spacing="2">MatrixLab</text>
+  <!-- tagline -->
+  <text x="198" y="126" fill="#1f8a52"
+        font-family="'JetBrains Mono','SFMono-Regular',ui-monospace,Menlo,Consolas,monospace"
+        font-size="17" font-weight="500" letter-spacing="3">SANDBOX SERVER · AGENTS · CI · MCP</text>
 </svg>

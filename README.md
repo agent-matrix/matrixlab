@@ -531,6 +531,20 @@ Built-in profile compatibility:
 - `https://github.com/ruslanmv/agent-generator`
 - `https://github.com/ruslanmv/RepoGuardian`
 
+### MCP sandbox server (main sandbox mode)
+
+The same Space is MatrixLab's **main MCP sandbox server**. Its home page (`/`) is
+the Matrix CLI Console with a one-click **Enable sandbox** button that trials any
+curated MCP server in a throwaway session via `/mcp/*`.
+
+Sessions run **in parallel** — each is an isolated subprocess with its own TTL and
+`/tmp`. The concurrent cap is `MATRIXLAB_MCP_MAX_SESSIONS` (default `auto`, derived
+from the instance's CPU/RAM; pin `=10` for ten parallel sandboxes). Capacity is
+reported by `GET /mcp/health`. Verified with
+`hf/scripts/sandbox_concurrency_smoke.py` (10/10 parallel sessions, each
+discovering tools). See `hf/README.md` → **Concurrency** for the specs→capacity
+table.
+
 For full API examples and runtime variables, see `hf/README.md`.
 
 ---
