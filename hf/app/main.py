@@ -80,6 +80,27 @@ async def health():
     }
 
 
+@app.get("/api/version")
+async def api_version():
+    """Report the REAL installed matrix-cli / matrix-python-sdk versions so the
+    console header reflects what is actually deployed. Dependencies are unpinned
+    (see requirements.txt), so this always shows the latest installed."""
+    import importlib.metadata as _md
+    import sys as _sys
+
+    def _v(dist: str) -> str:
+        try:
+            return _md.version(dist)
+        except Exception:
+            return "unknown"
+
+    return {
+        "matrix_cli": _v("matrix-cli"),
+        "matrix_sdk": _v("matrix-python-sdk"),
+        "python": f"{_sys.version_info.major}.{_sys.version_info.minor}",
+    }
+
+
 @app.get("/profiles")
 async def list_profiles():
     return {"profiles": PROFILE_PRESETS}

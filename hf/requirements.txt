@@ -5,3 +5,8 @@ pydantic>=2.12.0
 python-multipart>=0.0.18
 pyyaml>=6.0
 httpx>=0.28.0
+# Matrix CLI + SDK — intentionally UNPINNED so the Space always installs the
+# latest published versions. The console reports whatever is actually
+# installed via GET /api/version.
+matrix-cli
+matrix-python-sdk

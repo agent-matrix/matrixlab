@@ -89,6 +89,24 @@ function scoreTool(tool, query) {
 /* ---- Lightweight session state (mirrors real CLI; easy to wire to a sandbox) ---- */
 const SESSION = { runners: {} }; // alias -> {name, alias, version, port, url, pid, running}
 const HUB_BASE = "https://api.matrixhub.io";
+
+// Real CLI/SDK versions, injected by the console after GET /api/version (deps
+// are unpinned -> always the latest installed). Until that resolves we show a
+// neutral "latest" placeholder rather than a hard-coded version number.
+const MX_FALLBACK = { cli: "latest", sdk: "latest", py: "3.11+" };
+function mxVersions() {
+  try {
+    const v = (typeof window !== "undefined" && window.__MATRIX_VERSIONS__) || {};
+    return {
+      cli: v.matrix_cli || MX_FALLBACK.cli,
+      sdk: v.matrix_sdk || MX_FALLBACK.sdk,
+      py: v.python || MX_FALLBACK.py,
+    };
+  } catch (e) {
+    return { cli: MX_FALLBACK.cli, sdk: MX_FALLBACK.sdk, py: MX_FALLBACK.py };
+  }
+}
+
 function kindSlug(kind) { return (kind || "tool").toLowerCase().replace(/\s+/g, "_"); }
 function rnd(min, max) { return Math.floor(min + Math.random() * (max - min)); }
 
@@ -217,8 +235,8 @@ function responseFor(raw) {
 
   if (cmd === "version" || p.flags.version) {
     return { tone: "ok", lines: [
-      "matrix-cli 0.1.6",
-      "matrix-python-sdk 0.1.9 · python 3.11+",
+      `matrix-cli ${mxVersions().cli}`,
+      `matrix-python-sdk ${mxVersions().sdk} · python ${mxVersions().py}`,
       `hub ${HUB_BASE}`,
     ] };
   }
@@ -390,8 +408,8 @@ function responseFor(raw) {
     const alias = p.pos[1] || "—";
     return { tone: "ok", lines: [
       `diagnostics for ${alias}`,
-      "  python 3.11+        ✓",
-      "  matrix-python-sdk   ✓ 0.1.9",
+      `  python ${mxVersions().py}        ✓`,
+      `  matrix-python-sdk   ✓ ${mxVersions().sdk}`,
       "  mcp extra           ✓ 1.13.1",
       "  hub reachable       ✓",
       "  target writable     ✓",
@@ -411,5 +429,5 @@ function responseFor(raw) {
 
 Object.assign(window, {
   TOOLS, SEARCH_RESULTS, CATEGORIES, RETELL_FEATURES, INSTALL_COMMAND,
-  scoreTool, responseFor, catalogSearch, renderSearch,
+  scoreTool, responseFor, catalogSearch, renderSearch, mxVersions,
 });

@@ -34,6 +34,28 @@ function HFConsole() {
   const cmdHist = React.useRef([]);
   const cmdIdx = React.useRef(-1);
 
+  // Real installed matrix-cli / matrix-python-sdk versions (GET /api/version).
+  // Deps are unpinned in requirements.txt, so this reflects whatever latest is
+  // deployed. Shown in the header pill; also published to window so the engine's
+  // `matrix version` / `matrix connection` output uses the real numbers.
+  const [vers, setVers] = React.useState({ cli: "latest", sdk: "latest", py: "3.11+" });
+  React.useEffect(() => {
+    let alive = true;
+    fetch("/api/version", { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d) return;
+        try { window.__MATRIX_VERSIONS__ = d; } catch (e) { /* no-op */ }
+        setVers({
+          cli: d.matrix_cli || "latest",
+          sdk: d.matrix_sdk || "latest",
+          py: d.python || "3.11+",
+        });
+      })
+      .catch(() => { /* offline — keep the neutral placeholder */ });
+    return () => { alive = false; };
+  }, []);
+
   // Embedded inside the matrixhub.io modal iframe (?embed=1): show a close
   // button in this (single) terminal header that asks the parent to close.
   const embedded = React.useMemo(() => {
@@ -245,7 +267,7 @@ function HFConsole() {
         <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 9, fontFamily: "var(--hf-mono)", fontSize: 11,
             color: "#34c873", border: "1px solid rgba(0,255,102,0.18)", borderRadius: 99, padding: "4px 11px", background: "rgba(0,255,102,0.04)" }}>
-            <span className="hf-ver" style={{ color: "#1f8a52" }}>matrix-cli 0.1.6 · sdk 0.1.9 · python 3.11+ ·</span>
+            <span className="hf-ver" style={{ color: "#1f8a52" }}>matrix-cli {vers.cli} · sdk {vers.sdk} · python {vers.py} ·</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <span style={{ position: "relative", width: 8, height: 8 }}>
                 <span style={{ position: "absolute", inset: 0, borderRadius: 99, background: "#00ff66", animation: "hfPing 1.8s ease-out infinite" }} />
