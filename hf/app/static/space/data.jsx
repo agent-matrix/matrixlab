@@ -92,6 +92,44 @@ const HUB_BASE = "https://api.matrixhub.io";
 function kindSlug(kind) { return (kind || "tool").toLowerCase().replace(/\s+/g, "_"); }
 function rnd(min, max) { return Math.floor(min + Math.random() * (max - min)); }
 
+/* ---- Real Hub catalog access (browser fetch; mirrors `matrix search`) -------------
+   The console talks to the live Hub so results are REAL, never canned. The Hub
+   serves `access-control-allow-origin: *`, so a cross-origin fetch from the HF
+   Space works. `catalogSearch` returns the raw items; `renderSearch` formats them
+   into terminal lines the same way the real CLI does (full id + summary, a result
+   count, and an install tip seeded with the first real id). */
+async function catalogSearch(query, opts) {
+  opts = opts || {};
+  const params = new URLSearchParams();
+  if (query) params.set("q", query);
+  if (opts.type) params.set("type", String(opts.type));
+  params.set("limit", String(opts.limit || 8));
+  const url = `${HUB_BASE}/catalog?${params.toString()}`;
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error(`hub ${r.status}`);
+  const d = await r.json();
+  const items = Array.isArray(d.items) ? d.items : (Array.isArray(d.results) ? d.results : []);
+  const total = Number(d.total != null ? d.total : items.length);
+  return { items, total };
+}
+
+function renderSearch(query, type, items, total) {
+  if (!items.length) {
+    return { tone: "warn", lines: [
+      `no results for "${query}"${type ? " --type " + type : ""}.`,
+      "try a broader query, e.g. matrix search github",
+    ] };
+  }
+  const lines = items.map((it) => {
+    const id = String(it.id || "?");
+    const label = String(it.summary || it.name || it.type || "").replace(/\s+/g, " ").trim();
+    return label ? `${id}  ${label.slice(0, 80)}` : id;
+  });
+  lines.push(`» ${total} result${total === 1 ? "" : "s"}.`);
+  lines.push(`! Tip: install with: matrix install ${items[0].id}`);
+  return { tone: "ok", lines };
+}
+
 function parseCmd(raw) {
   let toks = (raw.trim().replace(/^\//, "").match(/"[^"]*"|'[^']*'|\S+/g) || [])
     .map((t) => t.replace(/^["']|["']$/g, ""));
@@ -189,19 +227,9 @@ function responseFor(raw) {
     const type = typeof p.flags.type === "string" ? p.flags.type.toLowerCase() : null;
     const limit = p.flags.limit ? Number(p.flags.limit) : 8;
     const query = p.pos.slice(1).join(" ");
-    let list = TOOLS.map((t) => ({ ...t, score: scoreTool(t, query) }))
-      .filter((t) => !query || t.score > 8);
-    if (type) list = list.filter((t) => kindSlug(t.kind) === type);
-    list = list.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, limit);
-    if (!list.length) return { tone: "warn", lines: [`no results for "${query}"${type ? " --type " + type : ""}`, "try a broader query, e.g. matrix search github"] };
-    return { tone: "ok", lines: [
-      `${list.length} result${list.length === 1 ? "" : "s"}${type ? " · type=" + type : ""}`,
-      ...list.map((t) => {
-        const id = `${kindSlug(t.kind)}:${t.id}@0.1.0`;
-        return `  ${(t.verified ? "✓" : "·")} ${id.padEnd(40, " ").slice(0, 40)} ${t.installs.padStart(5)} installs  ★${t.rating}`;
-      }),
-      "install: matrix install <name> --alias <a>",
-    ] };
+    // Real catalog search — resolved asynchronously by the console against the
+    // live Hub API (window.catalogSearch / window.renderSearch). No mock data.
+    return { action: "search", query, type, limit };
   }
 
   if (cmd === "install") {
@@ -383,5 +411,5 @@ function responseFor(raw) {
 
 Object.assign(window, {
   TOOLS, SEARCH_RESULTS, CATEGORIES, RETELL_FEATURES, INSTALL_COMMAND,
-  scoreTool, responseFor,
+  scoreTool, responseFor, catalogSearch, renderSearch,
 });
