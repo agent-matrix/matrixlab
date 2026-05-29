@@ -47,7 +47,7 @@
       runtime: "node",
       start_command: "npx -y @modelcontextprotocol/server-filesystem /tmp",
       transport: "stdio",
-      ttl_seconds: 300,
+      ttl_seconds: 600, // 10-minute trial sandbox, then auto-shutdown
     },
   };
 
