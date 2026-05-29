@@ -9,15 +9,17 @@ from typing import Any, Dict, Literal
 
 import httpx
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from app.runner_client import RunnerClient
 from app.sandbox import run_verification
+from app.mcp_sandbox import router as mcp_sandbox_router
 
-app = FastAPI(title="MatrixLab HF Backend", version="1.1.0")
+app = FastAPI(title="MatrixLab HF Backend", version="1.2.0")
+app.include_router(mcp_sandbox_router)
 
 BASE_DIR = Path(__file__).resolve().parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -71,7 +73,7 @@ async def health():
 
     return {
         "status": "ok",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "runs": len(runs),
         "runner_url": runner.base_url,
         "runner": runner_status,
@@ -137,8 +139,18 @@ async def repo_run(req: RepoTaskRequest):
 
 # Existing ZIP verification UI/API --------------------------------------------
 
+SPACE_INDEX = BASE_DIR / "static" / "space" / "index.html"
+
+
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+async def home():
+    """MatrixLab Space — Matrix CLI Console + sandbox-enable button."""
+    return FileResponse(str(SPACE_INDEX), media_type="text/html")
+
+
+@app.get("/verify", response_class=HTMLResponse)
+async def verify_home(request: Request):
+    """Legacy ZIP-verification UI (moved from /)."""
     recent = sorted(runs.values(), key=lambda r: r.get("created", ""), reverse=True)[:20]
     return templates.TemplateResponse(
         request=request,

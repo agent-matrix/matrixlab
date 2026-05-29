@@ -1,0 +1,33 @@
+[
+  {
+    "id": "mcp_server:filesystem",
+    "name": "Filesystem MCP Server",
+    "kind": "mcp_server",
+    "type": "mcp_server",
+    "version": "1.0.0",
+    "description": "Reference MCP server for safe filesystem testing inside /tmp.",
+    "installs": 10000,
+    "rating": 4.7,
+    "updated": "2026-05-29T00:00:00Z",
+    "created": "2026-05-01T00:00:00Z",
+    "license": "MIT",
+    "verified": true,
+    "sandbox_enabled": true,
+    "homepage": "https://modelcontextprotocol.io/",
+    "source": "https://github.com/modelcontextprotocol/servers",
+    "security_url": "https://modelcontextprotocol.io/",
+    "latency": "low",
+    "runtime": "node",
+    "transport": "stdio",
+    "sandbox": {
+      "start_command": "npx -y @modelcontextprotocol/server-filesystem /tmp",
+      "install_command": null,
+      "ttl_seconds": 600,
+      "requires_secrets": false,
+      "network": "disabled",
+      "safe_sample_arguments": {
+        "list_directory": {"path": "/tmp"}
+      }
+    }
+  }
+]
