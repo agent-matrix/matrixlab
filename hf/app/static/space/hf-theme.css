@@ -168,7 +168,7 @@ input { font-family: inherit; }
   background: #fff; border: 1px solid var(--hf-border); border-radius: 6px; padding: 2px 8px;
 }
 .hf-app-frame {
-  border: 1px solid var(--hf-border); border-radius: 0 0 var(--hf-r-lg) var(--hf-r-lg);
+  border: 1px solid var(--hf-border); border-radius: var(--hf-r-lg);
   overflow: hidden; background: #000402;
   box-shadow: var(--hf-shadow-md);
 }
@@ -199,6 +199,7 @@ input { font-family: inherit; }
   .hf-app-bar .sdk { display: none; }
   .hf-console { height: 74vh; min-height: 460px; max-height: 660px; }
   .hf-console .hf-sub { display: none; }
+  .hf-console .hf-ver { display: none; }
   .hf-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .hf-tab-spacer { display: none; }
   .hf-title { font-size: 17px; }

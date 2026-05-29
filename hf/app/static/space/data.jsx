@@ -291,7 +291,7 @@ function responseFor(raw) {
         `  "result": "executed against ${alias || "remote"} over SSE" }`,
       ] };
     }
-    return { tone: "err", lines: ["matrix mcp <probe|call> …  — see matrix help"] };
+    return { tone: "err", lines: ["matrix mcp <probe|call|test> …  — see matrix help"] };
   }
 
   if (cmd === "ps") {

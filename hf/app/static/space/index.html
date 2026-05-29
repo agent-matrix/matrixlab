@@ -26,7 +26,19 @@
 
   @keyframes hfRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   .hf-app-wrap > * { animation: hfRise .4s cubic-bezier(.2,.8,.2,1) both; }
+
+  /* Embedded mode: when opened inside a modal iframe (?embed=1), fill the
+     frame with the dark console and drop the page chrome/margins. */
+  html.embed, html.embed body { background: #000402; }
+  html.embed .hf-app-wrap { padding: 0; max-width: none; }
+  html.embed .hf-app-frame { border: none; border-radius: 0; box-shadow: none; }
+  html.embed .hf-console { height: 100vh; }
 </style>
+
+<script>
+  // Mark embedded mode early so the console fills the modal iframe cleanly.
+  try { if (new URLSearchParams(location.search).get("embed")) document.documentElement.classList.add("embed"); } catch (e) {}
+</script>
 
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>

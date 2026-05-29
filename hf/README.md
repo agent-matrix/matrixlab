@@ -13,30 +13,38 @@ short_description: MatrixLab HF backend for AI repo testing and debugging
 
 This Hugging Face Space is a **microservice frontend** for MatrixLab.
 
-The Space home page (`/`) is now the **MatrixLab Space** UI — a Matrix-film
-themed page with the **Matrix CLI Console** and an **Enable sandbox** button
-that trials MCP servers live in a throwaway sandbox (see below). The legacy
-ZIP-verification UI moved to **`/verify`**.
+The Space home page (`/`) is the **Matrix CLI Console** — and **only** the
+console. Because this runs inside a real Hugging Face Space, HF already renders
+the page chrome (owner/repo, App·Files·Community tabs, the **Running** badge,
+Settings/Restart), so MatrixLab does **not** duplicate that navigation or the
+running/online status. The app is one console, one status pill, one input. The
+legacy ZIP-verification UI moved to **`/verify`**.
+
+Trialing a server is a first-class command rather than a separate toggle:
+`matrix mcp test [name]` (or the **Test in sandbox** chip) starts a real
+ephemeral `/mcp/*` session, streams the lifecycle, and prints a verdict.
 
 It supports these modes:
 1. **MatrixLab Space UI** (`/`) — Matrix CLI Console + one-click sandbox testing.
 2. **Upload ZIP** (`/verify`) for static verification (syntax/security/basic tests).
 3. **Remote GitHub execution** through MatrixLab Runner using environment bootstrap + cached task runs.
 
-## MatrixLab Space UI & the "Enable sandbox" button
+## Matrix CLI Console & the embeddable sandbox button
 
 The page lives under `app/static/space/`:
 
 - `index.html` — loads React (CDN) + the components below.
 - `hf-theme.css`, `fx.jsx` (digital rain / typewriter), `data.jsx` (catalog + CLI engine).
-- `hf-console.jsx` — the embedded Matrix CLI Console.
-- `hf-space.jsx` — the Hugging Face Space chrome (tabs, header, settings).
-- **`sandbox.jsx`** — the reusable sandbox client + **`<SandboxButton>`**.
+- `hf-console.jsx` — the Matrix CLI Console (the whole in-Space UI).
+- `hf-space.jsx` — a thin shell that renders **only** the console (no duplicated
+  HF chrome).
+- **`sandbox.jsx`** — the reusable sandbox client (`window.MatrixLabSandbox`) plus
+  **`<SandboxButton>`** / `mountSandboxButton`.
 
-Clicking **enable sandbox** in the console title strip turns on *sandbox mode*.
-Then `matrix mcp test <name>` (or the **Test in sandbox** chip) starts a **real**
-ephemeral MCP session against this Space's `/mcp/*` API, streams the lifecycle
-into the terminal, lists the server's tools, and auto-expires (TTL · `/tmp` wiped).
+Inside the Space there is **no separate "enable sandbox" toggle** — `matrix mcp
+test` runs the real flow directly (the Space *is* the sandbox server). The
+`<SandboxButton>` / `mountSandboxButton` export is still shipped so **matrixhub.io**
+can embed a one-click toggle elsewhere (see "Embedding the button" below).
 
 ### Embedding the button in matrixhub.io (later)
 
