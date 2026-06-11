@@ -1,0 +1,17 @@
+name: node-repair
+description: Install Node dependencies with a clean lockfile and run the test suite.
+language: node
+commands:
+  - npm ci
+  - npm test
+timeout_seconds: 600
+network: restricted
+max_memory_mb: 4096
+artifacts: true
+artifact_files:
+  - npm-test-report.txt
+forbidden_commands:
+  - "rm -rf /"
+  - "mkfs"
+  - "shutdown"
+  - "dd if="
