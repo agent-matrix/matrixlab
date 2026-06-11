@@ -70,6 +70,7 @@ runner = [
   "fastapi>=0.109.0",
   "uvicorn[standard]>=0.27.0",
   "python-multipart>=0.0.9",
+  "pyyaml>=6",
 ]
 
 # The interactive CLI — friendlier output for ``matrixlab-sandbox``.
@@ -117,9 +118,17 @@ matrixlab-sandbox = "matrixlab.sandbox_cli:main"
 # extras are installed, so a bare ``pip install agent-matrix-lab`` doesn't
 # produce a binary that crashes on import.
 matrixlab-runner = "matrixlab.runner_entry:main"
+# Generic Sandbox Validation Provider API (default port 8765). Needs the
+# ``agent-matrix-lab[runner]`` extras (fastapi/uvicorn/pyyaml).
+matrixlab-api = "matrixlab.api.app:main"
 
 [tool.setuptools]
 include-package-data = false
+
+# Ship the sandbox validation profiles (matrixlab/profiles/*.yml) with the
+# wheel so ``matrixlab.api`` can load them after a plain ``pip install``.
+[tool.setuptools.package-data]
+matrixlab = ["profiles/*.yml", "profiles/*.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["."]

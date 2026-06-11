@@ -1,0 +1,17 @@
+name: docs-repair
+description: Build documentation and validate markdown / links.
+language: docs
+commands:
+  - python -m pip install -U pip
+  - mkdocs build --strict
+timeout_seconds: 300
+network: restricted
+max_memory_mb: 2048
+artifacts: true
+artifact_files:
+  - docs-build-report.txt
+forbidden_commands:
+  - "rm -rf /"
+  - "mkfs"
+  - "shutdown"
+  - "dd if="

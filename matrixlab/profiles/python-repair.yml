@@ -1,0 +1,18 @@
+name: python-repair
+description: Install a Python project (editable) and run its pytest suite.
+language: python
+commands:
+  - python -m pip install -U pip
+  - pip install -e .
+  - pytest -q
+timeout_seconds: 600
+network: restricted
+max_memory_mb: 4096
+artifacts: true
+artifact_files:
+  - pytest-report.txt
+forbidden_commands:
+  - "rm -rf /"
+  - "mkfs"
+  - "shutdown"
+  - "dd if="

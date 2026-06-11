@@ -1,0 +1,18 @@
+name: ci-repair
+description: Run lint and format checks the way CI would.
+language: python
+commands:
+  - python -m pip install -U pip
+  - ruff check .
+  - ruff format --check .
+timeout_seconds: 300
+network: restricted
+max_memory_mb: 2048
+artifacts: true
+artifact_files:
+  - lint-report.txt
+forbidden_commands:
+  - "rm -rf /"
+  - "mkfs"
+  - "shutdown"
+  - "dd if="
