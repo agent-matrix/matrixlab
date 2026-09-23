@@ -26,6 +26,9 @@ from .models import (
     RunResponse,
     WorkspaceUploadRequest,
     WorkspaceUploadResponse,
+    VerificationRequest,
+    VerificationResponse,
+    VerificationCheckResult,
 )
 from .native import (
     SERVICE,
@@ -111,6 +114,7 @@ def capabilities():
         "/chat/run",
         "/snippets/chatbot",
         "/repo/run",
+        "/verify",
         "/workspaces/upload",
         "/runs/{sandbox_id}/events",
         "/runs/{sandbox_id}/artifacts",
@@ -209,6 +213,65 @@ def repo_run(req: RepoRunRequest):
         import traceback
 
         traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/verify", response_model=VerificationResponse, dependencies=[Depends(_require_bearer_auth)])
+def verify_proof_obligations(req: VerificationRequest):
+    """Independently execute declared verifier commands in a fresh sandbox."""
+    import hashlib
+    import json
+
+    try:
+        legacy = RunRequest(
+            repo_url=req.repo_url,
+            ref=req.ref,
+            steps=[
+                {
+                    "name": f"{check.verifier}: {check.criterion}",
+                    "command": check.command,
+                    "timeout_seconds": check.timeout_seconds,
+                    "network": "egress" if req.allow_network else "none",
+                }
+                for check in req.checks
+            ],
+            cpu_limit=req.cpu_limit,
+            mem_limit_mb=req.mem_limit_mb,
+            pids_limit=req.pids_limit,
+        )
+        raw = RunResponse.model_validate(run_job(legacy))
+        results = []
+        for check, result in zip(req.checks, raw.results):
+            results.append(
+                VerificationCheckResult(
+                    criterion=check.criterion,
+                    verifier=check.verifier,
+                    passed=result.exit_code == 0,
+                    exit_code=result.exit_code,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                )
+            )
+        verdict = "pass" if results and all(r.passed for r in results) else "fail"
+        canonical = json.dumps(
+            {
+                "run_id": req.run_id,
+                "plan_id": req.plan_id,
+                "checks": [r.model_dump() for r in results],
+                "sandbox_job_id": raw.job_id,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return VerificationResponse(
+            run_id=req.run_id,
+            plan_id=req.plan_id,
+            verdict=verdict,
+            sandbox_job_id=raw.job_id,
+            checks=results,
+            evidence_sha256=hashlib.sha256(canonical.encode()).hexdigest(),
+        )
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 

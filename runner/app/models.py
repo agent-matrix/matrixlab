@@ -211,3 +211,41 @@ class EnvironmentTaskResponse(BaseModel):
     branch: str
     command_effective: str
     run: RunResponse
+
+
+class ProofCheck(BaseModel):
+    criterion: str = Field(..., min_length=1, max_length=1000)
+    verifier: str = Field(..., min_length=1, max_length=200)
+    command: str = Field(..., min_length=1, max_length=4000)
+    timeout_seconds: int = Field(120, ge=1, le=3600)
+
+
+class VerificationRequest(BaseModel):
+    run_id: str = Field(..., min_length=1, max_length=200)
+    plan_id: str = Field(..., min_length=1, max_length=200)
+    repo_url: str
+    ref: Optional[str] = None
+    checks: List[ProofCheck] = Field(..., min_length=1, max_length=20)
+    profile: str = "python"
+    allow_network: bool = False
+    cpu_limit: float = Field(1.0, ge=0.1, le=8.0)
+    mem_limit_mb: int = Field(1024, ge=128, le=32768)
+    pids_limit: int = Field(256, ge=16, le=4096)
+
+
+class VerificationCheckResult(BaseModel):
+    criterion: str
+    verifier: str
+    passed: bool
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+
+
+class VerificationResponse(BaseModel):
+    run_id: str
+    plan_id: str
+    verdict: Literal["pass", "fail", "uncertain"]
+    sandbox_job_id: str
+    checks: List[VerificationCheckResult]
+    evidence_sha256: str
